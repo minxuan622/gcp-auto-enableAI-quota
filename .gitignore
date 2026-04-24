@@ -1,0 +1,17 @@
+# 個人設定（含敏感資料）
+config.json
+.env
+
+# 瀏覽器登入狀態
+.browser_state/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# macOS
+.DS_Store
+
+# Claude Code 本地設定（保留 .claude/skills/ 共享用）
+.claude/settings.local.json

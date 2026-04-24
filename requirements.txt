@@ -1,0 +1,8 @@
+google-auth>=2.29.0
+google-cloud-service-usage>=1.10.0
+google-cloud-resource-manager>=1.13.0
+google-cloud-quotas>=0.1.0
+rich>=13.7.0
+InquirerPy>=0.3.4
+playwright>=1.44.0
+python-dotenv>=1.0.0

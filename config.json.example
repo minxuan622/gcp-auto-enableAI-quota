@@ -1,0 +1,16 @@
+{
+  "eula_form": {
+    "business_name": "",
+    "business_website": "",
+    "contact_email": "",
+    "business_hq": "Taiwan",
+    "industry": "Customer Service",
+    "intended_users": "Internal employees and external users",
+    "use_cases": "test",
+    "has_additional_requirements": "No",
+    "additional_requirements_detail": ""
+  },
+  "defaults": {
+    "region": ""
+  }
+}
