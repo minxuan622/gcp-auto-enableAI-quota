@@ -1,0 +1,21 @@
+{
+  "_comment": "customers.json 用來把『客戶名稱』對應到一組 GCP project IDs，讓 Claude 收到『幫 X 客戶開 Claude Y』時能批次處理。複製此檔為 customers.json 後填入實際資料。customers.json 已在 .gitignore，不會推上 GitHub。",
+  "customers": {
+    "Customer Name 1": {
+      "aliases": ["alias1", "暱稱1"],
+      "projects": [
+        "project-id-1",
+        "project-id-2",
+        "project-id-3"
+      ],
+      "notes": "選填：合約類型、聯絡人、區域偏好等備註"
+    },
+    "Customer Name 2": {
+      "aliases": ["alias2"],
+      "projects": [
+        "another-project-id"
+      ],
+      "notes": ""
+    }
+  }
+}

@@ -1,6 +1,6 @@
 ---
 name: vertex-ai-claude-enabler
-description: 在 GCP Vertex AI 上開通 Anthropic Claude 模型（EULA 同意 + 配額提升），並協助維護 gcp-claude-manager 工具本身。當使用者要求「幫我開 Claude X.X」、「在專案 XXX 開通 Claude 新模型」、「Claude Opus/Sonnet/Haiku X.X 發布了幫我開」、「提升 Claude X 的配額」、「新 Claude 模型在 Vertex AI 還沒開通」、或提及 Vertex AI Model Garden、anthropic-claude base_model、Cloud Quotas、RPM/TPM 等情境時必須觸發；也適用於修改本工具程式碼（新增模型、改 Routing 分類、擴充 CLI 子指令、修 EULA 自動填表）。此 Skill 限於 gcp-claude-manager 專案目錄下才會載入。
+description: 在 GCP Vertex AI 上開通 Anthropic Claude 模型（EULA 同意 + 配額提升），並協助維護 gcp-claude-manager 工具本身。當使用者要求「幫我開 Claude X.X」、「在專案 XXX 開通 Claude 新模型」、「Claude Opus/Sonnet/Haiku X.X 發布了幫我開」、「提升 Claude X 的配額」、「新 Claude 模型在 Vertex AI 還沒開通」、或提及 Vertex AI Model Garden、anthropic-claude base_model、Cloud Quotas、RPM/TPM 等情境時必須觸發；也適用於修改本工具程式碼（新增模型、改 Routing 分類、擴充 CLI 子指令、修 EULA 自動填表）；也適用於以「客戶名稱」為單位批次開通的情境（例：「幫 RK 的所有專案開 Claude 5.0」、「光環有雲全部開通 Opus 4.7」、「ghyy 客戶提配額」）——此情境讀取 customers.json 解析出 project IDs 後逐一執行。此 Skill 限於 gcp-claude-manager 專案目錄下才會載入。
 ---
 
 # Vertex AI Claude Model Enabler
@@ -151,6 +151,78 @@ Kevin 可能從手機 SSH 到 Mac 觸發你。判斷原則：
 
 1. chat 確認：「要把 `kevin-480608` / Claude 4.7 Opus / Global RPM 提升到 200，其他不動，確定嗎？」
 2. Bash: `python main.py quota --project kevin-480608 --model claude-opus-4-7 --routing global --rpm 200 --yes`
+
+### 客戶 → 專案映射（批次開通）
+
+當 Kevin 提到**客戶名稱**（而非 project ID）時觸發。
+
+**觸發詞範例：**
+
+- 「幫 **RK** 的所有專案開 Claude 5.0」
+- 「**光環有雲** 全部開通 Opus 4.7」
+- 「**ghyy** 客戶把 RPM 都拉到 100」
+- 「客戶 X 的專案都...」
+
+**資料來源：** `customers.json`（位於專案根目錄，已 gitignored）
+
+格式：
+
+```json
+{
+  "customers": {
+    "RK": {
+      "aliases": ["rk"],
+      "projects": ["claude-20260316", "claude-20260303-04", ...],
+      "notes": ""
+    }
+  }
+}
+```
+
+**標準流程：**
+
+1. **Read `customers.json`**
+   - 不存在 → 提示：「請先 `cp customers.example.json customers.json` 並填入客戶資料」，停止
+2. **匹配客戶**
+   - 比對 `customers.<key>` 的 key
+   - 也比對 `aliases` 陣列（fuzzy）
+   - 找不到 → 列出現有客戶清單問 Kevin 選哪個
+3. **chat 複誦確認**（**必做**，不要省略）：
+   > 我要在 **RK** 的 **5 個專案**：
+   > - claude-20260316
+   > - claude-20260303-04
+   > - claude-20260303-03
+   > - claude-20260303-02
+   > - claude-20260303-01
+   >
+   > 開通 **Claude 5.0 Opus**，確定嗎？
+4. **Kevin 回 yes** → 逐一執行（迴圈呼叫現有 CLI 子指令）：
+   ```bash
+   for pid in claude-20260316 claude-20260303-04 ...; do
+     python main.py enable --project "$pid" --models claude-opus-5 --headless --yes
+   done
+   ```
+   - 預設 `--headless`（批次場景通常不需要看瀏覽器）
+   - 每個專案的 stdout 直接顯示在 chat
+5. **總結回報**：成功幾個 / 已開通幾個 / 失敗幾個（含原因）
+
+**配額批次也適用同模式**——把 step 4 換成 `quota` 子指令的迴圈即可。
+
+**設計原則：**
+
+- **不在 main.py 裡解析 customers.json**——customers.json 是 Claude（我）的資料來源，main.py 只認 `--project` 單一 ID。Claude 在 chat 層做 customer→project 展開，再呼叫 CLI。這樣 main.py 對 clone 下來的人保持簡單，customers.json 純粹是 Kevin 的個人 / 公司資料。
+- **每個專案一次 CLI call**，不要試圖把多個專案塞進一個 `--project`（CLI 目前不支援逗號分隔）。
+- **--yes 是關鍵**——已經在 chat step 3 確認過，不要讓每個專案再彈確認。
+- **失敗繼續**——某個專案失敗（例如 billing 沒綁）不要中斷後面的，最後總結回報。
+
+**新增客戶 / 維護 customers.json：**
+
+當 Kevin 說「**新增客戶 X，專案有 a/b/c**」或「**RK 多了一個 claude-20260317**」時：
+
+1. Read 現有 `customers.json`
+2. Edit 加入新客戶 / append 新專案
+3. chat 回報變更摘要
+4. 不需要 commit 到 git（檔案已 gitignored）
 
 ---
 

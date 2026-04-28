@@ -376,18 +376,54 @@ EULA 表單欄位設定。`config.json.example` 已提供範本，複製後修�
 | `BROWSER_STATE_DIR` | `.browser_state` | 瀏覽器登入狀態儲存目錄 |
 | `DEFAULT_REGION` | `us-east5` | 預設區域（可在選單中覆蓋） |
 
+### `customers.json`（選填，搭配 Claude Code Skill）
+
+把「客戶名稱」對應到一組 GCP project IDs，搭配 `.claude/skills/vertex-ai-claude-enabler/SKILL.md`，
+讓你在 Claude Code 對話中說「幫 **RK** 的所有專案開 Claude 5.0」時，AI 能自動展開為多個 `enable` 指令批次執行。
+
+**啟用方式：**
+
+```bash
+cp customers.example.json customers.json
+# 編輯 customers.json 填入實際客戶與專案
+```
+
+**格式：**
+
+```json
+{
+  "customers": {
+    "RK": {
+      "aliases": ["rk"],
+      "projects": ["project-id-1", "project-id-2"],
+      "notes": "選填備註"
+    }
+  }
+}
+```
+
+`aliases` 提供模糊比對（例如「ghyy」「光環」都能匹配同一客戶）。`customers.json` 已在 `.gitignore`，
+含商業資料不會推上 GitHub；`customers.example.json` 為公開範本。
+
+> **注意**：本檔案的解析發生在 Claude Code 對話層（由 SKILL.md 引導），不是在 `main.py` 內。
+> CLI 子指令本身仍然只接受單一 `--project`，由 Claude 在 chat 展開為迴圈呼叫。
+
 ---
 
 ## 專案結構
 
 ```
 gcp-claude-manager/
-├── main.py               # 主程式（CLI 互動介面 + 所有功能邏輯）
-├── config.json.example   # 設定檔範本（EULA 表單欄位）
-├── .env.example          # 環境變數範本
-├── requirements.txt      # Python 相依套件
-├── setup.sh / setup.bat  # 一鍵安裝腳本（Mac / Windows）
-├── run.sh / run.bat      # 啟動腳本（Mac / Windows）
+├── main.py                         # 主程式（CLI 互動介面 + CLI 子指令）
+├── config.json.example             # EULA 表單範本
+├── customers.example.json          # 客戶 → 專案映射範本（搭配 Claude Code Skill）
+├── .env.example                    # 環境變數範本
+├── requirements.txt                # Python 相依套件
+├── setup.sh / setup.bat            # 一鍵安裝腳本（Mac / Windows）
+├── run.sh / run.bat                # 啟動腳本（Mac / Windows）
+├── .claude/skills/                 # Claude Code Skill（cwd 在本專案時自動載入）
+│   └── vertex-ai-claude-enabler/
+│       └── SKILL.md
 └── .gitignore
 ```
 

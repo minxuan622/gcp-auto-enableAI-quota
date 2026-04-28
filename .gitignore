@@ -2,6 +2,9 @@
 config.json
 .env
 
+# 客戶清單（含商業資料：客戶名稱對應 GCP 專案）
+customers.json
+
 # 瀏覽器登入狀態
 .browser_state/
 
