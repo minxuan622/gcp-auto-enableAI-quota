@@ -12,8 +12,8 @@
 |------|------|
 | **環境開通** | 自動啟用 Vertex AI API + Cloud Quotas API，透過 Playwright 自動填寫 Model Garden EULA 表單並完成同意 |
 | **配額提升** | 查詢 RPM / Input TPM / Output TPM 配額現況，分別設定目標值並透過 Cloud Quotas API 送出提升申請 |
-| **批次多專案**（v1.1）| 單次執行處理多個 GCP 專案：互動模式 checkbox 多選、CLI 支援 `--projects` / `--projects-file`；已開通 / 已達目標自動跳過 |
-| **模型狀態 Matrix**（v1.1）| `list-models` 子指令可產出「專案 × 模型」開通狀態矩陣，一眼看出各環境哪些模型已啟用 |
+| **批次多專案**| 單次執行處理多個 GCP 專案：互動模式 checkbox 多選、CLI 支援 `--projects` / `--projects-file`；已開通 / 已達目標自動跳過 |
+| **模型狀態 Matrix**| `list-models` 子指令可產出「專案 × 模型」開通狀態矩陣，一眼看出各環境哪些模型已啟用 |
 | **Billing 檢查** | 操作前自動確認專案是否已綁定帳單帳戶，未綁定時給予明確提示與連結 |
 | **瀏覽器狀態管理** | 自動儲存 / 載入 Google 登入狀態，首次登入後免重複驗證；批次模式整段共用一個 session |
 | **返回上一步** | 所有互動式選單皆支援「返回上一步」，選錯不必從頭來過 |
@@ -76,20 +76,26 @@ chmod +x setup.sh
 <summary>手動安裝（不使用腳本）</summary>
 
 ```bash
-# 建立並啟用虛擬環境
+# 1. 用系統 Python 建立虛擬環境（只此一次）
 python3 -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
 
-# 安裝 Python 套件
+# 2. 進虛擬環境
+#    Mac / Linux:
+source .venv/bin/activate
+#    Windows:
+#    .venv\Scripts\activate
+
+# 3. 此後 pip / python 都自動指向 venv（不會污染系統 Python）
 pip install -r requirements.txt
-
-# 安裝 Playwright Chromium
 playwright install chromium
 
-# 建立設定檔
+# 4. 建立設定檔
 cp config.json.example config.json
 cp .env.example .env
 ```
+
+> **重要區分**：`python3 -m venv` 是用**系統 Python** 建虛擬環境，只此一次。
+> 之後執行 `main.py` 時，必須用 `.venv/bin/python` 或進 venv 後用 `python`，不能直接用系統 `python3`，否則找不到依賴。
 
 </details>
 
@@ -139,10 +145,20 @@ gcloud auth application-default login
 
 # Windows
 run.bat
-
-# 或直接執行
-source .venv/bin/activate && python main.py
 ```
+
+**或直接執行**（兩種寫法擇一）：
+
+```bash
+# 方法 A：先進虛擬環境，之後 python 自動指向 venv
+source .venv/bin/activate
+python main.py
+
+# 方法 B：不進 venv，直接指定 venv 內的 python
+.venv/bin/python main.py
+```
+
+> **為什麼一定要用 venv 內的 Python？** 專案依賴（rich、playwright、google-cloud-quotas 等）只裝在 `.venv/` 裡。直接打 `python3 main.py` 會 `ModuleNotFoundError`；macOS 預設沒 `python` 命令，也會 `command not found`。
 
 ---
 
@@ -211,26 +227,26 @@ source .venv/bin/activate && python main.py
 
 ```bash
 # 單一專案 + 單一模型
-python main.py enable --project kevin-480608 --models claude-opus-4-7
+.venv/bin/python main.py enable --project my-project-id --models claude-opus-4-7
 
 # 單一專案 + 多個模型（逗號分隔）
-python main.py enable --project kevin-480608 \
+.venv/bin/python main.py enable --project my-project-id \
                       --models claude-opus-4-7,claude-sonnet-4-6
 
 # 多個專案（逗號分隔）× 多個模型 —— 批次模式
-python main.py enable --projects proj-a,proj-b,proj-c \
+.venv/bin/python main.py enable --projects proj-a,proj-b,proj-c \
                       --models claude-opus-4-7,claude-sonnet-4-6
 
 # 從檔案讀取專案清單（一行一個，`#` 開頭視為註解）
-python main.py enable --projects-file projects.txt \
+.venv/bin/python main.py enable --projects-file projects.txt \
                       --models claude-opus-4-7
 
 # 遠端執行（headless 模式）+ 全自動跳過確認
-python main.py enable --projects-file projects.txt \
+.venv/bin/python main.py enable --projects-file projects.txt \
                       --models claude-opus-4-7 --headless --yes
 
 # 失敗專案重跑：工具會自動產生 failed-projects.txt
-python main.py enable --projects-file failed-projects.txt \
+.venv/bin/python main.py enable --projects-file failed-projects.txt \
                       --models claude-opus-4-7
 ```
 
@@ -238,7 +254,7 @@ python main.py enable --projects-file failed-projects.txt \
 
 | 參數 | 格式 | 範例 |
 |------|------|------|
-| `--project` | 單一專案 ID | `--project kevin-480608` |
+| `--project` | 單一專案 ID | `--project my-project-id` |
 | `--projects` | 逗號分隔多個專案 ID | `--projects proj-a,proj-b,proj-c` |
 | `--projects-file` | 文字檔（一行一個 ID，`#` 為註解） | `--projects-file projects.txt` |
 
@@ -261,24 +277,24 @@ python main.py enable --projects-file failed-projects.txt \
 
 ```bash
 # 單一專案：提升 Global 策略下的 RPM / TPM
-python main.py quota --project kevin-480608 \
+.venv/bin/python main.py quota --project my-project-id \
                      --model claude-opus-4-7 \
                      --routing global \
                      --rpm 100 --input-tpm 500000 --output-tpm 100000
 
 # 只提升 RPM（其他不動）
-python main.py quota --project kevin-480608 \
+.venv/bin/python main.py quota --project my-project-id \
                      --model claude-opus-4-7 \
                      --routing global --rpm 200
 
 # 批次多專案：相同 model / routing / 目標值套用到所有專案
-python main.py quota --projects proj-a,proj-b,proj-c \
+.venv/bin/python main.py quota --projects proj-a,proj-b,proj-c \
                      --model claude-opus-4-7 \
                      --routing global \
                      --rpm 100 --input-tpm 500000
 
 # 從檔案讀取專案清單 + 全自動
-python main.py quota --projects-file projects.txt \
+.venv/bin/python main.py quota --projects-file projects.txt \
                      --model claude-opus-4-7 \
                      --routing global --rpm 200 --yes
 ```
@@ -287,7 +303,7 @@ python main.py quota --projects-file projects.txt \
 
 | 參數 | 格式 | 範例 |
 |------|------|------|
-| `--project` | 單一專案 ID | `--project kevin-480608` |
+| `--project` | 單一專案 ID | `--project my-project-id` |
 | `--projects` | 逗號分隔多個專案 ID | `--projects proj-a,proj-b` |
 | `--projects-file` | 文字檔（一行一個 ID，`#` 為註解） | `--projects-file projects.txt` |
 
@@ -315,16 +331,16 @@ python main.py quota --projects-file projects.txt \
 
 ```bash
 # 列出所有支援的模型（URL slug、base_model ID）
-python main.py list-models
+.venv/bin/python main.py list-models
 
 # 檢查單一專案各模型開通狀態
-python main.py list-models --project kevin-480608
+.venv/bin/python main.py list-models --project my-project-id
 
 # 多專案 matrix：一眼看出哪些專案缺哪個模型
-python main.py list-models --projects proj-a,proj-b,proj-c
+.venv/bin/python main.py list-models --projects proj-a,proj-b,proj-c
 
 # 從檔案讀取
-python main.py list-models --projects-file projects.txt
+.venv/bin/python main.py list-models --projects-file projects.txt
 ```
 
 輸出範例（matrix 模式）：
@@ -358,6 +374,93 @@ claude-sonnet-4-6       ✅      ✅      ✅
 
 ---
 
+## Claude Code 整合
+
+本專案內建 [Claude Code Skill](https://docs.claude.com/en/docs/agents/skills)（位於 `.claude/skills/vertex-ai-claude-enabler/`），讓你**用自然語言**操作這個工具。
+
+只要在專案目錄打開 Claude Code，Skill 會自動載入。你可以直接說：
+
+- 「幫我在 `<project-id>` 開通 Claude 4.7 Opus」
+- 「幫客戶 A 的所有專案開 Claude Sonnet 4.6」（搭配 `customers.json`）
+- 「把 `<project-id>` 的 Claude 4.7 Opus Global RPM 拉到 200」
+- 「Claude 5.0 發布了，幫我確認 Vertex AI 上架了沒」
+
+Claude 會自動：
+
+1. 比對 `CLAUDE_MODELS` 清單（必要時 WebFetch 驗證 Vertex AI 上架狀態）
+2. 解析 `customers.json` 展開客戶 → 專案
+3. chat 複誦目標讓你確認
+4. 用 `--yes` + `--headless` 執行對應 CLI 子指令
+5. 回報結果
+
+> Skill 只在 cwd 為本專案目錄時載入，不會污染其他專案。詳見 [`SKILL.md`](.claude/skills/vertex-ai-claude-enabler/SKILL.md)。
+
+---
+
+## 常用任務 Cookbook
+
+幾個典型場景的指令片段（替換 `<...>` 占位符）：
+
+### 在新專案開通某個模型
+
+```bash
+.venv/bin/python main.py enable \
+  --project <PROJECT_ID> \
+  --models claude-opus-4-7 --yes
+```
+
+### 一次開通多個模型到多個專案
+
+```bash
+.venv/bin/python main.py enable \
+  --projects <PROJ_A>,<PROJ_B>,<PROJ_C> \
+  --models claude-opus-4-7,claude-sonnet-4-6 \
+  --headless --yes
+```
+
+### 批次提升一群專案的 Global RPM 到 200
+
+```bash
+.venv/bin/python main.py quota \
+  --projects-file projects.txt \
+  --model claude-opus-4-7 \
+  --routing global --rpm 200 --yes
+```
+
+### 看哪些專案還沒開通某個模型
+
+```bash
+.venv/bin/python main.py list-models --projects-file projects.txt
+```
+
+輸出 matrix 中該模型那一列裡的 ❌ 即為缺漏專案。
+
+### 失敗專案重跑
+
+任何 `enable` / `quota` 子指令失敗會自動產生 `failed-projects.txt`：
+
+```bash
+.venv/bin/python main.py enable \
+  --projects-file failed-projects.txt \
+  --models claude-opus-4-7 --yes
+```
+
+### 透過 Claude Code 一句話完成（推薦）
+
+```
+你（在 Claude Code 對話）：
+  幫客戶 Acme 的所有專案開通 Claude 4.7 Opus
+
+Claude 會：
+  1. 讀 customers.json 找到 Acme 對應的 project IDs
+  2. chat 列出所有專案讓你確認
+  3. 你回 yes
+  4. 自動跑 .venv/bin/python main.py enable ... --yes 對每個專案
+  5. 回報結果總表
+```
+
+---
+
 ## 設定檔
 
 ### `config.json`（必填）
@@ -379,7 +482,7 @@ EULA 表單欄位設定。`config.json.example` 已提供範本，複製後修�
 ### `customers.json`（選填，搭配 Claude Code Skill）
 
 把「客戶名稱」對應到一組 GCP project IDs，搭配 `.claude/skills/vertex-ai-claude-enabler/SKILL.md`，
-讓你在 Claude Code 對話中說「幫 **RK** 的所有專案開 Claude 5.0」時，AI 能自動展開為多個 `enable` 指令批次執行。
+讓你在 Claude Code 對話中說「幫 **客戶 A** 的所有專案開 Claude 5.0」時，AI 能自動展開為多個 `enable` 指令批次執行。
 
 **啟用方式：**
 
@@ -393,8 +496,8 @@ cp customers.example.json customers.json
 ```json
 {
   "customers": {
-    "RK": {
-      "aliases": ["rk"],
+    "Acme Corp": {
+      "aliases": ["acme", "客戶代號"],
       "projects": ["project-id-1", "project-id-2"],
       "notes": "選填備註"
     }
@@ -402,7 +505,7 @@ cp customers.example.json customers.json
 }
 ```
 
-`aliases` 提供模糊比對（例如「ghyy」「光環」都能匹配同一客戶）。`customers.json` 已在 `.gitignore`，
+`aliases` 提供模糊比對（同一客戶可有多個慣稱）。`customers.json` 已在 `.gitignore`，
 含商業資料不會推上 GitHub；`customers.example.json` 為公開範本。
 
 > **注意**：本檔案的解析發生在 Claude Code 對話層（由 SKILL.md 引導），不是在 `main.py` 內。
@@ -457,6 +560,26 @@ gcp-claude-manager/
 ## 常見問題
 
 <details>
+<summary><b>執行時出現「<code>zsh: command not found: python</code>」或「<code>ModuleNotFoundError: No module named 'rich'</code>」</b></summary>
+
+代表你**沒進虛擬環境**，或用了系統 Python。專案依賴只裝在 `.venv/` 內。
+
+兩種解法擇一：
+
+```bash
+# 方法 A：先進 venv（之後 python 自動指向 venv）
+source .venv/bin/activate
+python main.py list-models
+
+# 方法 B：不進 venv，直接用 venv 的 python
+.venv/bin/python main.py list-models
+```
+
+macOS 預設只有 `python3` 沒有 `python`，加上專案依賴隔離在 venv，所以**任何一個 `main.py` 指令都不能直接用系統 `python3`**。
+
+</details>
+
+<details>
 <summary><b>執行時出現「Application Default Credentials 尚未設定」</b></summary>
 
 請先執行 GCP 授權：
@@ -490,7 +613,9 @@ Vertex AI Claude 模型需要計費才能使用。前往工具提示的 Console 
 <details>
 <summary><b>配額查詢顯示全部 N/A</b></summary>
 
-代表該模型尚未在此專案開通。請先回到主選單執行「環境開通」完成 EULA 同意，之後配額才會出現具體數值。
+代表該模型尚未在此專案接受 EULA。請先執行「環境開通」（互動模式）或 `enable` 子指令完成。
+
+> 工具用 `:countTokens` API 探測 EULA 接受狀態（404 = 未接受、400 = 已接受），準確度高於早期版本依賴 Cloud Quotas 預設值的判斷。
 
 </details>
 
@@ -529,8 +654,3 @@ Angular Material 的 checkbox 元件有時點擊未生效。工具會自動偵�
 
 </details>
 
----
-
-## License
-
-Private — Internal use only.
