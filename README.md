@@ -172,7 +172,7 @@ source .venv/bin/activate && python main.py
 - 首次使用會開啟瀏覽器讓你手動登入 Google 帳號，之後登入狀態自動保存
 - 若「Terms of service have not been accepted」彈窗出現，工具會自動關閉並重試（最多 3 次）
 - 自動填寫使用 Tab 鍵循序導航，穩定度高於 CSS 選擇器
-- **已開通的模型自動跳過**：透過查 Cloud Quotas 判斷，若已有配額 = 已同意 EULA
+- **已開通的模型自動跳過**：對 publisher model 的 `:countTokens` endpoint 探測，404 = 未開通、400 = 已開通（Partner Model 真實 EULA 接受狀態）
 - 批次執行若有失敗，自動寫 `failed-projects.txt`，可直接 `--projects-file failed-projects.txt` 重跑
 
 ### 配額提升（支援多專案 checkbox 多選）
@@ -252,7 +252,7 @@ python main.py enable --projects-file failed-projects.txt \
 
 **批次行為：**
 
-- 逐專案預檢：Billing / API 狀態 / 已開通模型（透過查 Cloud Quotas 判斷）
+- 逐專案預檢：Billing / API 狀態 / 已開通模型（對 publisher model 發 `:countTokens` 探測 EULA 狀態）
 - 已開通的 (專案 × 模型) 組合顯示 `⏭ SKIP (已開通)`，不會重跑
 - 所有專案共用同一個 Playwright session，免重複登入
 - 執行結束顯示結果 table；若有失敗，寫 `failed-projects.txt` 方便重跑
@@ -337,8 +337,8 @@ claude-sonnet-4-6       ✅      ✅      ✅
 ...
 ```
 
-- ✅ 已開通（任一 routing 有配額）
-- ❌ 未開通
+- ✅ 已開通（`:countTokens` 探測回 400，模型可存取 = EULA 已接受）
+- ❌ 未開通（`:countTokens` 探測回 404，模型對該專案不可見）
 - ⚠  無法查詢（權限不足 / Billing 未綁）
 
 **專案參數與 `enable` / `quota` 一致**：`--project` / `--projects` / `--projects-file` 三擇一，皆可省略（省略則只列模型清單，不查狀態）。

@@ -404,25 +404,54 @@ def parse_projects_input(
     sys.exit(1)
 
 
-def is_model_enabled(project_id: str, base_model: str) -> bool:
+def is_model_enabled(project_id: str, slug: str, region: str = "us-east5") -> bool:
     """
-    透過 Cloud Quotas 查詢判斷模型是否已在此專案開通。
-    任一 routing 有非零 limit 即視為已開通。查詢失敗（權限/API 錯誤）回 False。
+    透過呼叫 Vertex AI publisher model 的 :countTokens endpoint 探測模型是否已開通。
+
+    判斷邏輯：
+        404 → 未開通（Publisher Model 對該專案不可見，代表 EULA 未接受）
+        400 → 已開通（模型可存取，countTokens 對 Anthropic Claude 本身不支援，
+                     但能存取就代表 EULA 已過）
+        200 → 已開通（如未來 Google 開放 countTokens 對 Claude 可用）
+        其他（403 / 5xx / 網路錯誤）→ 保守視為未開通，寧可重跑流程也不要誤判跳過
+
+    為什麼用 :countTokens 而不是 modelGardenEula:check：
+        Anthropic Claude 是 Partner Model，不走 modelGardenEula 系統，
+        該 API 對 Claude 永遠回空 acked 欄位。countTokens 探測是實證可靠的訊號。
+
+    為什麼用 us-east5 而不是 locations/global：
+        Anthropic Claude 不部署在 locations/global API endpoint，
+        global endpoint 對所有專案都會 404；us-east5 是 Claude 最常見部署區。
+        EULA 是 per-project，從任一可用區探測結果都一致。
     """
+    import requests
+    from google.auth import default
+    from google.auth.transport.requests import Request
+
     try:
-        quotas = get_quota_info(project_id, base_model, strict=False)
+        creds, _ = default()
+        creds.refresh(Request())
+        url = (
+            f"https://{region}-aiplatform.googleapis.com/v1/projects/{project_id}"
+            f"/locations/{region}/publishers/anthropic/models/{slug}:countTokens"
+        )
+        r = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {creds.token}",
+                "X-Goog-User-Project": project_id,
+                "Content-Type": "application/json",
+            },
+            json={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
+            timeout=15,
+        )
+        if r.status_code == 404:
+            return False
+        if r.status_code in (200, 400):
+            return True
+        return False
     except Exception:
         return False
-    if not quotas:
-        return False
-    for q in quotas:
-        _, qtype = _classify_quota(q["name"], q["metric"])
-        if qtype == "unknown":
-            continue
-        limit = q.get("limit", "N/A")
-        if isinstance(limit, (int, float)) and limit > 0:
-            return True
-    return False
 
 
 def print_batch_summary(results: list[OpResult], title: str, write_failed_file: bool = True):
@@ -1796,8 +1825,8 @@ def run_batch_enable(
         # 檢查哪些 model 已開通
         to_enable: list[tuple] = []
         for m in models:
-            display_name, base_model, _slug = m
-            if is_model_enabled(pid, base_model):
+            display_name, _base_model, slug = m
+            if is_model_enabled(pid, slug):
                 console.print(f"  [dim]⏭  {display_name} 已開通，跳過[/]")
                 results.append(OpResult(pid, display_name, "SKIP", "已開通"))
             else:
@@ -2135,9 +2164,9 @@ def cmd_list_models(args):
             console.print("[yellow]⚠ Billing 未綁定[/]")
             continue
 
-        for display_name, base_model, slug in CLAUDE_MODELS:
+        for display_name, _base_model, slug in CLAUDE_MODELS:
             try:
-                enabled = is_model_enabled(pid, base_model)
+                enabled = is_model_enabled(pid, slug)
                 row[slug] = "✅" if enabled else "❌"
             except Exception:
                 row[slug] = "⚠"
