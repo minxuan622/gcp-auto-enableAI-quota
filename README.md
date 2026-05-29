@@ -159,7 +159,7 @@ gcloud auth application-default login
 ./run.sh
 
 # Windows
-run.bat
+.\run.bat
 ```
 
 **或直接執行**（兩種寫法擇一）：
