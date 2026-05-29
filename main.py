@@ -45,6 +45,7 @@ DEFAULT_REGION = os.getenv("DEFAULT_REGION", "us-east5")
 # Claude 模型清單：(顯示名稱, GCP base_model dimension 值, Model Garden URL slug)
 # base_model 值必須與 GCP quota dimensions 完全一致（含 anthropic- 前綴）
 CLAUDE_MODELS = [
+    ("Claude 4.8 Opus",   "anthropic-claude-opus-4-8",            "claude-opus-4-8"),
     ("Claude 4.7 Opus",   "anthropic-claude-opus-4-7",            "claude-opus-4-7"),
     ("Claude 4.6 Opus",   "anthropic-claude-opus-4-6",            "claude-opus-4-6"),
     ("Claude 4.6 Sonnet", "anthropic-claude-sonnet-4-6",          "claude-sonnet-4-6"),
@@ -142,18 +143,19 @@ def load_config() -> dict:
 
 def check_gcloud_auth():
     """檢查 gcloud CLI 是否安裝、ADC 是否已登入。"""
-    if not shutil.which("gcloud"):
+    gcloud_path = shutil.which("gcloud")
+    if not gcloud_path:
         console.print(Panel(
             "[bold red]未偵測到 gcloud CLI[/]\n\n"
             "請先安裝 Google Cloud SDK：\n"
             "  Mac:     brew install --cask google-cloud-sdk\n"
-            "  Windows: winget install Google.CloudSDK",
+            "  Windows: https://cloud.google.com/sdk/docs/install",
             title="⚠️ 環境檢查失敗",
         ))
         sys.exit(1)
 
     result = subprocess.run(
-        ["gcloud", "auth", "application-default", "print-access-token"],
+        [gcloud_path, "auth", "application-default", "print-access-token"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:

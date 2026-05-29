@@ -1,86 +1,127 @@
 @echo off
 chcp 65001 >nul
-REM ──────────────────────────────────────────────
-REM Windows 一鍵安裝腳本
-REM 用法：在專案資料夾中雙擊 setup.bat 或在 PowerShell 執行
-REM ──────────────────────────────────────────────
+setlocal enabledelayedexpansion
 
 cd /d "%~dp0"
 
-echo ╔══════════════════════════════════════════╗
-echo ║  GCP Claude Manager — 環境安裝           ║
-echo ╚══════════════════════════════════════════╝
+echo ==========================================
+echo   GCP Claude Manager - Setup (Windows)
+echo ==========================================
 echo.
 
-REM 1. 檢查 Python
+REM ── 1. Check Python exists ────────────────
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo ❌ 找不到 Python，請先安裝 Python 3.10+
-    echo    https://www.python.org/downloads/
+    echo [ERROR] Python not found.
+    echo.
+    echo   Please install Python 3.10 or newer:
+    echo     https://www.python.org/downloads/
+    echo.
+    echo   IMPORTANT: during install, tick "Add Python to PATH".
+    echo   After installing, open a NEW PowerShell window and run setup.bat again.
+    echo.
+    echo   Opening the download page in your browser...
+    start "" "https://www.python.org/downloads/"
     pause
     exit /b 1
 )
-echo ✓ Python 已安裝
 
-REM 2. 檢查 gcloud
-gcloud --version >nul 2>&1
+REM ── 1b. Check Python version >= 3.10 ──────
+for /f "tokens=2" %%v in ('python --version 2^>^&1') do set "PYVER=%%v"
+for /f "tokens=1,2 delims=." %%a in ("!PYVER!") do (
+    set "PYMAJOR=%%a"
+    set "PYMINOR=%%b"
+)
+set "PYOLD="
+if !PYMAJOR! LSS 3 set "PYOLD=1"
+if !PYMAJOR!==3 if !PYMINOR! LSS 10 set "PYOLD=1"
+if defined PYOLD (
+    echo [ERROR] Python !PYVER! is too old. This project needs Python 3.10 or newer.
+    echo.
+    echo   Please install a newer Python ^(3.12 / 3.13 recommended^):
+    echo     https://www.python.org/downloads/
+    echo.
+    echo   IMPORTANT: during install, tick "Add Python to PATH".
+    echo   After installing, open a NEW PowerShell window and run setup.bat again.
+    echo.
+    echo   Opening the download page in your browser...
+    start "" "https://www.python.org/downloads/"
+    pause
+    exit /b 1
+)
+echo [OK] Python !PYVER! found
+
+REM ── 2. Check gcloud ───────────────────────
+REM NOTE: 'call' is required - gcloud is a .cmd file; without 'call' this
+REM       batch script would hand off control and never run the rest.
+call gcloud --version >nul 2>&1
 if errorlevel 1 (
     echo.
-    echo ❌ 找不到 gcloud CLI
-    echo    請先安裝：winget install Google.CloudSDK
-    echo    或至 https://cloud.google.com/sdk/docs/install
+    echo [ERROR] gcloud CLI not found.
+    echo.
+    echo   Please install the Google Cloud SDK using the official installer:
+    echo     https://dl.google.com/dl/cloudsdk/channels/rapid/GoogleCloudSDKInstaller.exe
+    echo   ^(Reference: https://cloud.google.com/sdk/docs/install ^)
+    echo.
+    echo   Run the installer and click Next through to the end.
+    echo   After installing, open a NEW PowerShell window and run setup.bat again.
+    echo.
+    echo   Opening the installer download in your browser...
+    start "" "https://dl.google.com/dl/cloudsdk/channels/rapid/GoogleCloudSDKInstaller.exe"
     pause
     exit /b 1
 )
-echo ✓ gcloud 已安裝
+echo [OK] gcloud found
 
-REM 3. 建立虛擬環境
+REM ── 3. Create virtual environment ─────────
 echo.
-echo → 建立 Python 虛擬環境 (.venv) ...
+echo [1/4] Creating Python virtual environment (.venv) ...
 python -m venv .venv
 call .venv\Scripts\activate.bat
-echo ✓ 虛擬環境已建立並啟用
+echo [OK] Virtual environment created and activated
 
-REM 4. 安裝套件
+REM ── 4. Install packages ───────────────────
 echo.
-echo → 安裝 Python 套件 ...
-pip install --upgrade pip -q
+echo [2/4] Installing Python packages ...
+python -m pip install --upgrade pip -q
 pip install -r requirements.txt -q
-echo ✓ Python 套件安裝完成
+echo [OK] Python packages installed
 
-REM 5. 安裝 Playwright 瀏覽器
+REM ── 5. Install Playwright browser ─────────
 echo.
-echo → 安裝 Playwright Chromium ...
+echo [3/4] Installing Playwright Chromium ...
 playwright install chromium
-echo ✓ Chromium 安裝完成
+echo [OK] Chromium installed
 
-REM 6. 建立設定檔
+REM ── 6. Create config files ────────────────
+echo.
+echo [4/4] Creating config files ...
 if not exist config.json (
     copy config.json.example config.json >nul
-    echo.
-    echo ✓ 已建立 config.json（請用編輯器打開填入你的個人資料）
+    echo [OK] config.json created - please edit it with your company info
 ) else (
-    echo.
-    echo ✓ config.json 已存在，跳過
+    echo [SKIP] config.json already exists
 )
 
 if not exist .env (
     copy .env.example .env >nul
-    echo ✓ 已建立 .env（預設值即可使用，有需要再修改）
+    echo [OK] .env created
 ) else (
-    echo ✓ .env 已存在，跳過
+    echo [SKIP] .env already exists
 )
 
-REM 7. 完成
+REM ── 7. Done ───────────────────────────────
 echo.
-echo ════════════════════════════════════════════
-echo   安裝完成！
+echo ==========================================
+echo   Setup Complete!
 echo.
-echo   下一步：
-echo     1. 編輯 config.json 填入你的姓名/公司/職稱等
-echo     2. 執行 GCP 授權（只需一次）：
+echo   Next steps:
+echo     1. Edit config.json with your company info
+echo        (business_name / business_website / contact_email / use_cases)
+echo     2. GCP auth (one-time):
 echo        gcloud auth application-default login
-echo     3. 執行工具：
+echo     3. Run the tool:
 echo        run.bat
-echo ════════════════════════════════════════════
+echo ==========================================
 pause
+endlocal

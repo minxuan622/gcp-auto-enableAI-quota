@@ -22,6 +22,7 @@
 
 | 模型 | URL slug | GCP base_model ID |
 |------|----------|-------------------|
+| Claude 4.8 Opus   | `claude-opus-4-8`   | `anthropic-claude-opus-4-8` |
 | Claude 4.7 Opus   | `claude-opus-4-7`   | `anthropic-claude-opus-4-7` |
 | Claude 4.6 Opus   | `claude-opus-4-6`   | `anthropic-claude-opus-4-6` |
 | Claude 4.6 Sonnet | `claude-sonnet-4-6` | `anthropic-claude-sonnet-4-6` |
@@ -72,6 +73,18 @@ chmod +x setup.sh
 .\setup.bat
 ```
 
+> **Windows 前置提醒**：`setup.bat` 會先檢查環境，缺少時會自動開啟對應下載頁並引導你安裝：
+>
+> 1. **Python 3.10+**：Windows 內建的 `python` 可能是舊版（如 3.8），版本太舊會被擋下。請至 [python.org](https://www.python.org/downloads/) 安裝 **3.12 / 3.13**，安裝時務必勾選 **「Add Python to PATH」**。
+> 2. **Google Cloud SDK（gcloud）**：請使用 [官方安裝程式](https://cloud.google.com/sdk/docs/install)（`winget` 版本目前已停用，請勿使用）。
+> 3. 安裝完 Python 或 gcloud 後，**請開一個全新的 PowerShell 視窗**再重新執行 `.\setup.bat`（舊視窗讀不到新的 PATH）。
+>
+> **若 PowerShell 出現「未經數位簽署，無法載入」**（執行 `gcloud` 時），執行一次以下指令放寬執行原則即可：
+>
+> ```powershell
+> Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+> ```
+
 <details>
 <summary>手動安裝（不使用腳本）</summary>
 
@@ -106,6 +119,8 @@ gcloud auth application-default login
 ```
 
 瀏覽器會跳出 Google 登入頁面，登入後會在本機產生 Application Default Credentials（ADC），工具會自動使用。
+
+> **注意**：這一步（`application-default login`）跟 `gcloud init` 是**不同的東西**。`gcloud init` 只設定 CLI 的預設專案，工具實際讀的是 ADC。即使你跑過 `gcloud init`，仍必須執行上面這行才能通過驗證。
 
 > 如果出現 quota project 警告，執行：
 > ```bash
