@@ -196,13 +196,16 @@ python main.py
 → 逐專案預檢：Billing / API 狀態 / 已開通模型（自動標記 SKIP）
 → 顯示實際要跑的 (專案 × 模型) 組合並確認
 → Playwright 開啟瀏覽器（整段共用一個 session）
-→ 逐一導航 Model Garden：點擊 Enable → 填寫 EULA → Next → 勾選 Terms → Agree
+→ 逐一導航 Model Garden：
+     （部分新模型）接受 Advanced AI Safety Addendum → 點擊 Enable
+     → 填寫 EULA → Next → 勾選 Terms → Agree
 → 最後顯示批次結果 table（Project / Model / Status / Note）
 ```
 
 - 首次使用會開啟瀏覽器讓你手動登入 Google 帳號，之後登入狀態自動保存
 - 若「Terms of service have not been accepted」彈窗出現，工具會自動關閉並重試（最多 3 次）
 - 自動填寫使用 Tab 鍵循序導航，穩定度高於 CSS 選擇器
+- **部分新模型有前置同意關卡**：頁面出現「Advanced AI Safety Addendum」時，工具會自動點開連結、勾選、Accept Terms，待 Enable 解鎖後再繼續（舊模型無此關卡，自動跳過偵測）
 - **已開通的模型自動跳過**：對 publisher model 的 `:countTokens` endpoint 探測，404 = 未開通、400 = 已開通（Partner Model 真實 EULA 接受狀態）
 - 批次執行若有失敗，自動寫 `failed-projects.txt`，可直接 `--projects-file failed-projects.txt` 重跑
 

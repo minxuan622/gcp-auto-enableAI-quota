@@ -382,6 +382,31 @@ aiplatform.googleapis.com/online_prediction_input_tokens_per_minute_per_base_mod
 3. **30 秒 timeout**（15 秒不夠，4.7 頁面實測 20+ 秒才渲染完）
 4. **Tab 鍵循序填表**（`_fill_form_sequential`）比 CSS selector 穩
 5. Agreement 彈窗重試 3 次（`_try_check_terms` + `_force_click_all_checkboxes`）
+6. **Advanced AI Safety Addendum 前置關卡**（見下）
+
+**EULA 完整流程（兩種變體）：**
+
+```
+導航到 model 頁
+  → 等 Enable 按鈕 visible（30s）
+  → 偵測「Accept Terms」按鈕是否出現：
+      ├─ 出現 = 有 Advanced AI Safety Addendum 前置關卡（Fable 5 等新模型）
+      │    → _handle_safety_addendum()：
+      │        1. 點開「Advanced AI Safety Addendum」連結（開新分頁）→ checkbox 解鎖
+      │        2. 勾 checkbox → Accept Terms 啟用
+      │        3. 點 Accept Terms → Enable 從 disabled 變可點
+      │    （接受後「仍會」進入下面的商業資訊表單，不是取代）
+      └─ 不出現 = 舊模型，無前置關卡
+  → 點 Enable
+  → _fill_form_sequential()：商業資訊表單 → Next → 勾 Terms → Agree
+```
+
+**Advanced AI Safety Addendum 關鍵點：**
+
+- **偵測訊號用「Accept Terms 按鈕是否 visible」**，不要解析 Enable 的 disabled 狀態（Material 按鈕的 disabled 可能是 `disabled` 屬性／`aria-disabled`／CSS class，不可靠）。
+- **連結必須先點開**（target=`_blank` 開新分頁）checkbox 才解鎖——用 `context.expect_page()` 捕捉新分頁再 close。這是實測確認的硬性順序，不是可跳過的閱讀步驟。
+- **法律份量較重**：勾選文字寫明「代表組織同意、有權約束 Customer」。Kevin 已授權工具「自動接受」（2026-06）。若未來換人／換組織使用，這個自動接受的預設值要重新確認。
+- **detect-and-branch 設計**：同一段 code 同時相容「有關卡的新模型」與「無關卡的舊模型」，靠 runtime 偵測，不 hardcode 哪個 slug 需要。新模型若也加這道關卡，自動就支援。
 
 **如果 EULA 頁面結構變動：**
 
@@ -391,6 +416,8 @@ aiplatform.googleapis.com/online_prediction_input_tokens_per_minute_per_base_mod
 | 表單欄位順序變動 | Tab 循序會錯亂——重新確認順序調 `_fill_form_sequential` |
 | 下拉選單不展開 | 調 `_tab_select_dropdown` 的 key 序列（ArrowDown/Enter） |
 | Terms checkbox 點不到 | 檢查 `_is_checkbox_checked` 的 `aria-checked` 讀法 |
+| Accept Terms 點了沒反應 | 確認連結有先點開（checkbox 才解鎖）；檢查 `_handle_safety_addendum` 的 `context.expect_page` 有無捕捉到新分頁 |
+| 新模型 Enable 一直 disabled | 多半是 Addendum 沒接受成功——non-headless 觀察 `_handle_safety_addendum` 卡在哪步 |
 
 Debug 時先 non-headless + `BROWSER_SLOW_MO=1500` 慢速觀察。
 

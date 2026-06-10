@@ -45,6 +45,7 @@ DEFAULT_REGION = os.getenv("DEFAULT_REGION", "us-east5")
 # Claude 模型清單：(顯示名稱, GCP base_model dimension 值, Model Garden URL slug)
 # base_model 值必須與 GCP quota dimensions 完全一致（含 anthropic- 前綴）
 CLAUDE_MODELS = [
+    ("Claude Fable 5",    "anthropic-claude-fable-5",             "claude-fable-5"),
     ("Claude 4.8 Opus",   "anthropic-claude-opus-4-8",            "claude-opus-4-8"),
     ("Claude 4.7 Opus",   "anthropic-claude-opus-4-7",            "claude-opus-4-7"),
     ("Claude 4.6 Opus",   "anthropic-claude-opus-4-6",            "claude-opus-4-6"),
@@ -662,6 +663,21 @@ def run_enable_session(plan: list[tuple[str, list[tuple]]], config: dict) -> lis
                         results.append(OpResult(project_id, display_name, "SKIP", "未找到 Enable 按鈕（可能已開通）"))
                         continue
 
+                    # ── Advanced AI Safety Addendum 前置同意關卡（Fable 5 等新模型）──
+                    # 頁面渲染後若出現「Accept Terms」按鈕，代表 Enable 被前置同意鎖住，
+                    # 需先接受 Addendum，Enable 才會從 disabled 變可點。舊模型無此關卡。
+                    page.wait_for_timeout(1000)
+                    accept_btn = page.locator(
+                        'button:has-text("Accept Terms"), '
+                        '[role="button"]:has-text("Accept Terms")'
+                    ).first
+                    if accept_btn.is_visible(timeout=2000):
+                        ok, note = _handle_safety_addendum(page, context, accept_btn)
+                        if not ok:
+                            console.print(f"  [red]✗ Advanced AI Safety Addendum 處理失敗：{note}[/]")
+                            results.append(OpResult(project_id, display_name, "FAIL", note))
+                            continue
+
                     enable_btn.click()
                     console.print("  [green]✓[/] 已點擊 Enable")
 
@@ -865,6 +881,91 @@ def _fill_form_sequential(page, form: dict, display_name: str) -> tuple[str, str
 
     # 理論上不會到這，但為了 type-safety 加 fallback
     return "FAIL", "未完成 Agree 流程"
+
+
+def _handle_safety_addendum(page, context, accept_btn) -> tuple[bool, str]:
+    """
+    接受「Advanced AI Safety Addendum」前置同意關卡（Claude Fable 5 等新模型）。
+
+    新版 Model Garden 對部分模型加了一道前置法律同意：頁面頂端出現警告橫幅 +
+    checkbox + 「Accept Terms」按鈕，且 Enable 按鈕在接受前是 disabled 的。
+    流程（經實測確認）：
+      1. 必須先點開「Advanced AI Safety Addendum」連結（target=_blank 開新分頁），
+         checkbox 才會解鎖可勾。
+      2. 勾選 checkbox → 「Accept Terms」按鈕啟用。
+      3. 點 Accept Terms → Enable 按鈕才從 disabled 變可點。
+      4. 接受後仍會進入舊的商業資訊 EULA 表單（_fill_form_sequential），不是取代。
+
+    偵測由呼叫端負責（頁面渲染後若出現 Accept Terms 按鈕即代表有此關卡）；
+    舊模型無此關卡，呼叫端不會進到這個函數。
+
+    回傳 (proceed_ok, note)：
+      (True,  "...")  已成功接受 → 呼叫端可繼續點 Enable
+      (False, reason) 處理失敗 → 呼叫端記 FAIL
+    """
+    console.print("  [cyan]偵測到 Advanced AI Safety Addendum 前置同意，處理中...[/]")
+
+    # 1) 點開 Addendum 連結（會開新分頁），checkbox 才解鎖
+    link = page.locator('a:has-text("Advanced AI Safety Addendum")').first
+    try:
+        if link.is_visible(timeout=2000):
+            try:
+                with context.expect_page(timeout=8000) as new_info:
+                    link.click()
+                new_tab = new_info.value
+                page.wait_for_timeout(800)
+                try:
+                    new_tab.close()
+                except Exception:
+                    pass
+                console.print("  [green]✓[/] 已點開 Addendum 連結（解鎖 checkbox）")
+            except Exception:
+                # 沒有偵測到新分頁也沒關係，可能在同頁開啟，繼續嘗試勾選
+                console.print("  [dim]未偵測到新分頁，直接嘗試勾選 checkbox[/]")
+    except Exception:
+        pass
+
+    try:
+        page.bring_to_front()
+    except Exception:
+        pass
+    page.wait_for_timeout(400)
+
+    # 2) 勾選 Addendum checkbox
+    cb = page.locator(
+        'mat-checkbox:has-text("By checking this box"), '
+        'mat-checkbox:has-text("Advanced AI Safety Addendum"), '
+        'label:has-text("By checking this box")'
+    ).first
+    try:
+        cb.scroll_into_view_if_needed(timeout=2000)
+        cb.click()
+        page.wait_for_timeout(400)
+        console.print("  [green]✓[/] 已勾選 Addendum checkbox")
+    except Exception:
+        # 退而求其次：暴力點 banner 區域的第一個 checkbox
+        try:
+            page.locator('[role="checkbox"], input[type="checkbox"]').first.click()
+            page.wait_for_timeout(400)
+            console.print("  [green]✓[/] 已勾選 checkbox（通用選擇器）")
+        except Exception as e:
+            return False, f"無法勾選 Addendum checkbox: {str(e)[:50]}"
+
+    # 3) 點 Accept Terms（勾選後應已啟用）
+    try:
+        accept_btn.click(timeout=8000)
+        console.print("  [green]✓[/] 已點擊 Accept Terms")
+    except Exception as e:
+        return False, f"無法點擊 Accept Terms: {str(e)[:50]}"
+
+    # 4) 等待關卡消失（Accept Terms 隱藏 = 接受完成、Enable 解鎖）
+    try:
+        accept_btn.wait_for(state="hidden", timeout=15000)
+    except Exception:
+        pass  # 即使沒立刻消失，後續 Enable click 的 auto-wait 仍會驗證
+    page.wait_for_timeout(1200)
+    console.print("  [green]✓[/] Advanced AI Safety Addendum 已接受")
+    return True, "已接受 Addendum"
 
 
 def _try_check_terms(page):
