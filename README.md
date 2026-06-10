@@ -6,6 +6,29 @@
 
 ---
 
+## 為什麼用「模擬控制台操作」來開通模型？
+
+開通 Vertex AI 上的 Anthropic Claude 模型，核心動作是**接受該模型的 EULA**（部分新模型還多了一道 Advanced AI Safety Addendum）。這一步**沒有公開 API 可以呼叫**，原因如下：
+
+- Claude 屬於 GCP 的 **Partner Model**，不走 Hugging Face / 開源模型那套 `modelGardenEula` 接受機制——實測對 Claude 呼叫 `modelGardenEula:check`，回傳的接受狀態欄位是空的，代表這套 API 對 partner model 不適用。
+- EULA 接受需要填一張多欄位的企業資訊表單（公司名稱 / 網站 / 聯絡人 / 產業 / 使用情境……），這張表單目前只存在於 Console UI，沒有對應的 REST / SDK endpoint 接收這些結構化資料。
+- `gcloud` 與 Terraform 目前也沒有「接受 Claude 模型 EULA」的指令或 resource。
+
+換句話說，**這一步在官方層面就是只能在 Console 點**。因此本工具用 Playwright 驅動瀏覽器，精準重現人工在 Console 的操作流程（導航 → 接受 Addendum → Enable → 填表 → Agree），把這條唯一可行的手動路徑自動化。
+
+**但凡有 API 的部分，本工具都優先用 API**——不為了統一而硬塞瀏覽器自動化：
+
+| 動作 | 採用方式 | 原因 |
+|------|---------|------|
+| 啟用 GCP API | Service Usage SDK | 有官方 API |
+| 查詢 / 提升配額 | Cloud Quotas SDK | 有官方 API |
+| 偵測模型是否已開通 | `:countTokens` 探測（REST） | 有 API，且比解析頁面可靠 |
+| **接受 EULA / Addendum 並 Enable** | **Playwright 瀏覽器自動化** | **唯一可行路徑（無 API）** |
+
+這種「能用 API 就用 API、只有 EULA 這步退而求其次用瀏覽器」的混合設計，是在現有官方能力下，能達成 **批次開通 / 遠端執行 / 由 AI agent 一句話開好** 的務實解法。瀏覽器自動化以 Tab 鍵循序填表、多重選擇器、登入狀態持久化等方式強化穩定度（細節見「使用流程」與常見問題）。
+
+---
+
 ## 功能總覽
 
 | 功能 | 說明 |
