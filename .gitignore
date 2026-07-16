@@ -18,3 +18,5 @@ __pycache__/
 
 # Claude Code 本地設定（保留 .claude/skills/ 共享用）
 .claude/settings.local.json
+
+debug_screenshots/

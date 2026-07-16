@@ -520,6 +520,20 @@ def _save_browser_state(context):
     console.print(f"[green]✓[/] 瀏覽器登入狀態已儲存至 {BROWSER_STATE_DIR}/")
 
 
+def _debug_screenshot(page, label: str) -> str | None:
+    """自動化失敗時截圖存檔，方便事後診斷頁面實際狀態。回傳存檔路徑（失敗回 None）。"""
+    try:
+        safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in label)[:60]
+        debug_dir = PROJECT_ROOT / "debug_screenshots"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        path = str(debug_dir / f"fail_{safe}.png")
+        page.screenshot(path=path, full_page=True)
+        console.print(f"  [dim]🖼  已截圖存證：{path}[/]")
+        return path
+    except Exception:
+        return None
+
+
 # ──────────────────────────────────────────────
 # 功能一：環境開通
 # ──────────────────────────────────────────────
@@ -694,12 +708,14 @@ def run_enable_session(plan: list[tuple[str, list[tuple]]], config: dict) -> lis
 
                 except PwTimeout:
                     console.print(f"  [yellow]頁面載入或操作逾時，請手動檢查 {display_name}[/]")
+                    _debug_screenshot(page, f"{project_id}_{display_name}_timeout")
                     results.append(OpResult(project_id, display_name, "FAIL", "頁面載入/操作逾時"))
                 except TargetClosedError:
                     console.print(f"  [yellow]瀏覽器視窗意外關閉，跳過 {display_name}，請手動完成[/]")
                     results.append(OpResult(project_id, display_name, "FAIL", "瀏覽器意外關閉"))
                 except Exception as e:
                     console.print(f"  [red]自動填表時發生錯誤：{e}[/]")
+                    _debug_screenshot(page, f"{project_id}_{display_name}_error")
                     results.append(OpResult(project_id, display_name, "FAIL", str(e)[:80]))
 
         # 流程結束，更新登入狀態，安全關閉
