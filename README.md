@@ -22,30 +22,12 @@
 
 ## 運作原理（技術架構）
 
-「開通一個模型」是一條處理管線。除了唯一沒有公開 API 的 EULA 接受環節走瀏覽器自動化外，其餘皆使用官方 SDK / REST API。
+「開通一個模型」是一條處理管線。除了唯一沒有公開 API 的 EULA 接受環節走瀏覽器自動化外，其餘皆使用官方 SDK / REST API：
 
-```mermaid
-flowchart TD
-    Start(["指定 專案 × 模型<br/>CLI 子指令 或 Claude Code"])
-    Start --> Auth
-
-    subgraph APILANE["官方 API 路徑（SDK / REST）"]
-        direction TB
-        Auth["身份驗證<br/>ADC · google-auth"]
-        EnableAPI["啟用必要 API<br/>Service Usage SDK"]
-        Billing["Billing 檢查<br/>Cloud Billing REST"]
-        Detect{"偵測開通狀態<br/>publisher countTokens 探測"}
-        Quota["配額查詢 / 提升<br/>Cloud Quotas SDK"]
-    end
-
-    subgraph BROWSERLANE["瀏覽器路徑（EULA 接受 — 無公開 API）"]
-        EULA["Playwright 重現 Console 開通流程"]
-    end
-
-    Auth --> EnableAPI --> Billing --> Detect
-    Detect -->|"已開通 400"| Skip(["略過，不重跑"])
-    Detect -->|"未開通 404"| EULA
-    EULA --> Quota --> Report(["結果回報<br/>Rich 表格 / OpResult"])
+```
+身份驗證 → 啟用必要 API → Billing 檢查 → 偵測開通狀態
+   → （未開通才）EULA 開通 → 配額查詢 / 提升 → 結果回報
+        └─ 官方 API 路徑 ─────────┘  └ 瀏覽器 ┘  └─── API ───┘
 ```
 
 ### 各階段採用的技術
@@ -697,15 +679,6 @@ gcloud auth application-default set-quota-project <YOUR_PROJECT_ID>
 <summary><b>出現「專案尚未綁定 Billing Account」</b></summary>
 
 Vertex AI Claude 模型需要計費才能使用。前往工具提示的 Console 連結綁定帳單帳戶，或請專案管理員協助設定。
-
-</details>
-
-<details>
-<summary><b>配額查詢顯示全部 N/A</b></summary>
-
-代表該模型尚未在此專案接受 EULA。請先執行「環境開通」（互動模式）或 `enable` 子指令完成。
-
-> 工具用 `:countTokens` API 探測 EULA 接受狀態（404 = 未接受、400 = 已接受），準確度高於早期版本依賴 Cloud Quotas 預設值的判斷。
 
 </details>
 
