@@ -378,11 +378,28 @@ aiplatform.googleapis.com/online_prediction_input_tokens_per_minute_per_base_mod
 **已實作的防護：**
 
 1. `.browser_state/state.json` 持久化 cookies + localStorage
-2. 多重選擇器：`button:has-text("Enable"), [role="button"]:has-text("Enable"), a:has-text("Enable"), :text-is("Enable")`
+2. **URL 強制 `&hl=en`**（英文介面）+ **精準選擇器 `:text-is("Enable")`（含 `span:text-is`）**（見下「語言與選擇器陷阱」）
 3. **30 秒 timeout**（15 秒不夠，4.7 頁面實測 20+ 秒才渲染完）
 4. **Tab 鍵循序填表**（`_fill_form_sequential`）比 CSS selector 穩
 5. Agreement 彈窗重試 3 次（`_try_check_terms` + `_force_click_all_checkboxes`）
 6. **Advanced AI Safety Addendum 前置關卡**（見下）
+7. **失敗自動截圖** `_debug_screenshot()` → `debug_screenshots/`（gitignore）
+
+**⚠ 語言與選擇器陷阱（2026-07 實戰教訓，花很久才抓到）：**
+
+症狀：全新專案自動化開通時，點「Enable」後被導到 `/marketplace/product/google/aiplatform.googleapis.com`（Agent Platform API 產品頁），逾時失敗。**一開始誤以為是「Agent Platform 首次 onboarding 需要初始化」——完全錯誤。**
+
+真正根因（兩者疊加）：
+1. **Console 介面語言**：Kevin 帳號是繁中，真正的按鈕文字是 **「啟用」**，不是英文 "Enable"。
+2. **`:has-text("Enable")` 是子字串比對**：撲空「啟用」後，反而誤中頁面上的英文狀態連結 **「Vertex AI API enabl*ed*」**（一個 `<a>`，點了會導到 marketplace 產品頁）。
+
+修法：
+- **URL 加 `&hl=en`** → 強制英文介面，按鈕穩定為 "Enable"、表單/Accept Terms 也全英文（`_fill_form_sequential` 的欄位對照才穩）。
+- **選擇器改精準比對**：`button/span/a:text-is("Enable")`（真正的按鈕標籤是 `<span>Enable</span>`，所以**一定要含 `span:text-is`**），保留 `啟用` 當防呆。`:text-is` 完全比對不會誤中「...enabled」。
+
+**教訓**：診斷這類「點了跑去奇怪頁面」時，先在 click 前 log `page.url` + 「即將點擊的按鈕 `inner_text`」，一眼就看出點錯元素。不要急著假設是後端/權限/onboarding 問題。
+
+**`/vertex-ai/` → `/agent-platform/` 導向**：導航後 URL 會自動從 `/vertex-ai/publishers/...` 變 `/agent-platform/publishers/...`（Vertex AI 改名 Agent Platform 的路由），這是正常的、不影響流程。
 
 **EULA 完整流程（兩種變體）：**
 
@@ -412,7 +429,8 @@ aiplatform.googleapis.com/online_prediction_input_tokens_per_minute_per_base_mod
 
 | 症狀 | 調查方向 |
 |------|---------|
-| Enable 按鈕找不到 | `page.screenshot()` 看實際頁面；檢查按鈕文字是否改了 |
+| 點 Enable 後跑到 marketplace 產品頁 | **選擇器誤中「Vertex AI API enabled」狀態連結**——確認 `hl=en` 有生效、選擇器用 `:text-is` 精準比對（見上「語言與選擇器陷阱」） |
+| Enable 按鈕找不到 | `page.screenshot()` 看實際頁面；確認 `hl=en` 生效（中文介面按鈕是「啟用」）；用 `:text("Enable")` dump 所有含字元素看真正 tag（可能是 `<span>`） |
 | 表單欄位順序變動 | Tab 循序會錯亂——重新確認順序調 `_fill_form_sequential` |
 | 下拉選單不展開 | 調 `_tab_select_dropdown` 的 key 序列（ArrowDown/Enter） |
 | Terms checkbox 點不到 | 檢查 `_is_checkbox_checked` 的 `aria-checked` 讀法 |

@@ -645,7 +645,9 @@ def run_enable_session(plan: list[tuple[str, list[tuple]]], config: dict) -> lis
 
             for display_name, _model_id, garden_slug in models:
                 processed += 1
-                url = f"{MODEL_GARDEN_BASE}/{garden_slug}?project={project_id}"
+                # hl=en 強制英文介面：按鈕/狀態/表單文字語言固定，避免中文介面下
+                # 按鈕是「啟用」而選擇器（找英文 "Enable"）撲空、誤中英文狀態標籤
+                url = f"{MODEL_GARDEN_BASE}/{garden_slug}?project={project_id}&hl=en"
                 console.print(
                     f"\n[cyan]→ [{processed}/{total_models}][/] "
                     f"開通 [bold]{display_name}[/] @ [cyan]{project_id}[/]"
@@ -662,20 +664,40 @@ def run_enable_session(plan: list[tuple[str, list[tuple]]], config: dict) -> lis
 
                     # domcontentloaded 即可，GCP Console 是 SPA，networkidle 會卡住
                     page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    page.wait_for_timeout(3000)  # 讓 SPA 完整渲染（含 vertex-ai→agent-platform 導向）
 
                     # 等待 Enable 按鈕出現（最多 30 秒，讓 GCP Console SPA 完整載入）
                     console.print("  等待頁面載入...")
                     enable_btn = page.locator(
-                        # 多重選擇器策略：標準 button、role=button、Material 元件、純文字匹配
-                        'button:has-text("Enable"), '
-                        '[role="button"]:has-text("Enable"), '
-                        'a:has-text("Enable"), '
-                        ':text-is("Enable")'
+                        # 精準比對「Enable」：用 :text-is 完全比對，避免子字串誤中
+                        # 「Vertex AI API enabled」等狀態標籤（含 "enable" 子字串）。
+                        # 已用 hl=en 強制英文，故只需比對 "Enable"；另備中文「啟用」防呆。
+                        'button:text-is("Enable"), '
+                        'span:text-is("Enable"), '
+                        'a:text-is("Enable"), '
+                        '[role="button"]:text-is("Enable"), '
+                        'button:text-is("啟用"), '
+                        'span:text-is("啟用")'
                     ).first
                     try:
                         enable_btn.wait_for(state="visible", timeout=30000)
                     except Exception:
                         console.print("  [yellow]未找到 Enable 按鈕，可能已開通或頁面結構有變[/]")
+                        # 診斷：找所有含 "Enable" 的元素，印 tag + 確切文字 + 是否可見
+                        try:
+                            cands = page.locator(':text("Enable")').all()
+                            console.print(f"  [dim]— 含 'Enable' 的元素（共 {len(cands)}）—[/]")
+                            for c in cands[:15]:
+                                try:
+                                    tag = c.evaluate("e => e.tagName")
+                                    txt = (c.inner_text(timeout=500) or "").strip().replace("\n"," ")
+                                    vis = c.is_visible()
+                                    console.print(f"  [dim]  · <{tag}> vis={vis} 「{txt[:45]}」[/]")
+                                except Exception:
+                                    continue
+                        except Exception:
+                            pass
+                        _debug_screenshot(page, f"{project_id}_{display_name}_noenable")
                         results.append(OpResult(project_id, display_name, "SKIP", "未找到 Enable 按鈕（可能已開通）"))
                         continue
 
@@ -693,6 +715,13 @@ def run_enable_session(plan: list[tuple[str, list[tuple]]], config: dict) -> lis
                             console.print(f"  [red]✗ Advanced AI Safety Addendum 處理失敗：{note}[/]")
                             results.append(OpResult(project_id, display_name, "FAIL", note))
                             continue
+
+                    # 確認命中的是真正的 Enable 按鈕（而非「Vertex AI API enabled」狀態標籤）
+                    try:
+                        btn_text = (enable_btn.inner_text(timeout=1500) or "").strip().replace("\n", " ")
+                    except Exception:
+                        btn_text = "?"
+                    console.print(f"  [dim]即將點擊按鈕：「{btn_text}」[/]")
 
                     enable_btn.click()
                     console.print("  [green]✓[/] 已點擊 Enable")
