@@ -20,3 +20,6 @@ __pycache__/
 .claude/settings.local.json
 
 debug_screenshots/
+
+# 執行時產生的失敗清單（runtime 產物）
+failed-projects.txt
