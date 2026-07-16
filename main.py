@@ -46,6 +46,7 @@ DEFAULT_REGION = os.getenv("DEFAULT_REGION", "us-east5")
 # base_model 值必須與 GCP quota dimensions 完全一致（含 anthropic- 前綴）
 CLAUDE_MODELS = [
     ("Claude Fable 5",    "anthropic-claude-fable-5",             "claude-fable-5"),
+    ("Claude Sonnet 5",   "anthropic-claude-sonnet-5",            "claude-sonnet-5"),
     ("Claude 4.8 Opus",   "anthropic-claude-opus-4-8",            "claude-opus-4-8"),
     ("Claude 4.7 Opus",   "anthropic-claude-opus-4-7",            "claude-opus-4-7"),
     ("Claude 4.6 Opus",   "anthropic-claude-opus-4-6",            "claude-opus-4-6"),
@@ -560,11 +561,12 @@ def _enable_single_api(project_id: str, service_id: str, label: str):
 def enable_api(project_id: str):
     """
     確保環境所需的 GCP API 均已啟用：
-      1. aiplatform.googleapis.com  — Vertex AI（模型開通必要）
+      1. aiplatform.googleapis.com  — Vertex AI / Agent Platform（模型開通必要；
+         2026 起 GCP 將此 service 的顯示名稱改為 "Agent Platform API"，service id 不變）
       2. cloudquotas.googleapis.com — Cloud Quotas（配額查詢與提升必要）
     """
     console.print(f"\n[bold]確認必要 API 狀態[/] (專案: {project_id}) ...")
-    _enable_single_api(project_id, "aiplatform.googleapis.com",  "Vertex AI API")
+    _enable_single_api(project_id, "aiplatform.googleapis.com",  "Vertex AI / Agent Platform API")
     _enable_single_api(project_id, "cloudquotas.googleapis.com", "Cloud Quotas API")
 
 
