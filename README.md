@@ -1,8 +1,8 @@
 # GCP Vertex AI Claude Model Manager
 
-> 團隊用 CLI 工具，自動化管理 GCP Vertex AI 上 Claude 模型的 **環境開通** 與 **配額提升**。
+> CLI 工具，自動化管理 GCP Vertex AI（現稱 Agent Platform）上 Anthropic Claude 模型的 **環境開通（EULA）** 與 **配額提升**。
 >
-> 一個指令搞定：啟用 API、填寫 EULA、查詢配額、送出提升申請。
+> 設計原則：**能用官方 API 就用 API**，僅在唯一沒有公開 API 的環節（EULA 接受）以瀏覽器自動化精準重現 Console 操作。支援單一 / 批次 / 多客戶專案，並可由 Claude Code 以自然語言驅動。
 
 ---
 
@@ -16,16 +16,61 @@
 
 換句話說，**這一步在官方層面就是只能在 Console 點**。因此本工具用 Playwright 驅動瀏覽器，精準重現人工在 Console 的操作流程（導航 → 接受 Addendum → Enable → 填表 → Agree），把這條唯一可行的手動路徑自動化。
 
-**但凡有 API 的部分，本工具都優先用 API**——不為了統一而硬塞瀏覽器自動化：
+因此本工具採「**API 優先、EULA 例外**」的混合設計：凡有官方 API 的環節都走 API，僅 EULA 接受改用瀏覽器自動化。這讓工具能同時達成 **批次開通、遠端執行、由 AI agent 一句話開好**。完整的處理管線與各階段技術見下節。
 
-| 動作 | 採用方式 | 原因 |
-|------|---------|------|
-| 啟用 GCP API | Service Usage SDK | 有官方 API |
-| 查詢 / 提升配額 | Cloud Quotas SDK | 有官方 API |
-| 偵測模型是否已開通 | `:countTokens` 探測（REST） | 有 API，且比解析頁面可靠 |
-| **接受 EULA / Addendum 並 Enable** | **Playwright 瀏覽器自動化** | **唯一可行路徑（無 API）** |
+---
 
-這種「能用 API 就用 API、只有 EULA 這步退而求其次用瀏覽器」的混合設計，是在現有官方能力下，能達成 **批次開通 / 遠端執行 / 由 AI agent 一句話開好** 的務實解法。瀏覽器自動化以 Tab 鍵循序填表、多重選擇器、登入狀態持久化等方式強化穩定度（細節見「使用流程」與常見問題）。
+## 運作原理（技術架構）
+
+「開通一個模型」是一條處理管線。除了唯一沒有公開 API 的 EULA 接受環節走瀏覽器自動化外，其餘皆使用官方 SDK / REST API。
+
+```mermaid
+flowchart TD
+    Start(["指定 專案 × 模型<br/>CLI 子指令 或 Claude Code"])
+    Start --> Auth
+
+    subgraph APILANE["官方 API 路徑（SDK / REST）"]
+        direction TB
+        Auth["身份驗證<br/>ADC · google-auth"]
+        EnableAPI["啟用必要 API<br/>Service Usage SDK"]
+        Billing["Billing 檢查<br/>Cloud Billing REST"]
+        Detect{"偵測開通狀態<br/>publisher countTokens 探測"}
+        Quota["配額查詢 / 提升<br/>Cloud Quotas SDK"]
+    end
+
+    subgraph BROWSERLANE["瀏覽器路徑（EULA 接受 — 無公開 API）"]
+        EULA["Playwright 重現 Console 開通流程"]
+    end
+
+    Auth --> EnableAPI --> Billing --> Detect
+    Detect -->|"已開通 400"| Skip(["略過，不重跑"])
+    Detect -->|"未開通 404"| EULA
+    EULA --> Quota --> Report(["結果回報<br/>Rich 表格 / OpResult"])
+```
+
+### 各階段採用的技術
+
+| 階段 | 做什麼 | 採用技術 |
+|------|--------|---------|
+| **身份驗證** | 取得呼叫 GCP 的憑證 | Application Default Credentials（ADC），透過 `google-auth`；與 `gcloud` CLI 登入分離 |
+| **啟用必要 API** | 確保 `aiplatform`（Agent Platform）與 `cloudquotas` 已啟用 | Service Usage SDK，冪等啟用（已啟用則略過） |
+| **Billing 檢查** | 確認專案已綁定帳單帳戶 | Cloud Billing REST API，未綁定時中止並提示 |
+| **偵測開通狀態** | 判斷模型是否已接受 EULA | 對 publisher model 發 `:countTokens` 探測：`404` = 未開通、`400` = 已開通。此訊號直接反映 Partner Model 的真實可存取狀態，較「以配額預設值推測」更可靠 |
+| **EULA 開通** | 接受模型條款並啟用 | Playwright 驅動瀏覽器重現 Console 流程（見下節） |
+| **配額查詢 / 提升** | 讀取與調整 RPM / TPM | Cloud Quotas SDK；查詢走 REST（回應結構直觀）、送出走 SDK（型別安全、錯誤處理完整） |
+| **Routing 分類** | 區分 Global / US / EU / Regional | 依 quota metric 名稱前綴分類（`global_*` / `us_multi_region_*` …），Global 無溢價 |
+| **結果回報** | 逐項狀態與批次總表 | 統一的 `OpResult` 結果模型 + Rich 表格輸出；失敗清單寫入 `failed-projects.txt` 供重跑 |
+
+### EULA 開通：以瀏覽器自動化重現 Console 操作
+
+Anthropic Claude 屬於 Partner Model，其 EULA 與 Advanced AI Safety Addendum 的接受沒有公開 API（見上節）。此環節以 Playwright 精準重現人工在 Console 的操作，並以下列機制確保流程穩定、可預期、可稽核：
+
+- **鎖定介面語言**：導航時附加 `hl=en`，使按鈕、表單欄位與條款文字固定為英文，讓後續的元素定位與欄位對照有一致、可預期的基準（Console 會依帳號語言在地化，同一顆按鈕在不同語言下文字不同）。
+- **精準元素定位**：以完全文字比對（`:text-is`）定位操作元件，避免與頁面上文字相近的狀態標籤混淆。
+- **前置同意流程**：部分新模型在啟用前需先接受 Advanced AI Safety Addendum；工具會自動偵測並完成（開啟條款連結 → 勾選 → Accept Terms → 解鎖 Enable），無此關卡的模型則自動略過偵測。
+- **穩健填表**：企業資訊表單以鍵盤 Tab 循序填寫，降低對頁面 DOM 結構變動的敏感度；條款 checkbox 以多重策略重試確保勾選生效。
+- **登入狀態持久化**：首次登入後保存於 `.browser_state/`，後續免重複登入；批次作業整段共用同一個瀏覽器 session。
+- **可稽核性**：操作異常時自動截圖至 `debug_screenshots/`，便於事後診斷。
 
 ---
 
@@ -45,6 +90,8 @@
 
 | 模型 | URL slug | GCP base_model ID |
 |------|----------|-------------------|
+| Claude Fable 5    | `claude-fable-5`    | `anthropic-claude-fable-5` |
+| Claude Sonnet 5   | `claude-sonnet-5`   | `anthropic-claude-sonnet-5` |
 | Claude 4.8 Opus   | `claude-opus-4-8`   | `anthropic-claude-opus-4-8` |
 | Claude 4.7 Opus   | `claude-opus-4-7`   | `anthropic-claude-opus-4-7` |
 | Claude 4.6 Opus   | `claude-opus-4-6`   | `anthropic-claude-opus-4-6` |
@@ -53,7 +100,7 @@
 | Claude 4.5 Opus   | `claude-opus-4-5`   | `anthropic-claude-opus-4-5` |
 | Claude 4.5 Haiku  | `claude-haiku-4-5`  | `anthropic-claude-haiku-4-5` |
 
-> URL slug 用於 CLI 子指令的 `--models` / `--model` 參數。
+> URL slug 用於 CLI 子指令的 `--models` / `--model` 參數。清單定義於 `main.py` 的 `CLAUDE_MODELS`；新模型發布時在此新增一列即可（`list-models` 與互動選單會自動同步）。
 
 ### 支援 Routing 策略
 
@@ -579,22 +626,24 @@ gcp-claude-manager/
 
 | API | 用途 |
 |-----|------|
-| `aiplatform.googleapis.com` | Vertex AI — 模型開通與使用 |
+| `aiplatform.googleapis.com` | Vertex AI / Agent Platform — 模型開通與使用（2026 起顯示名稱為「Agent Platform API」，service id 不變） |
 | `cloudquotas.googleapis.com` | Cloud Quotas — 配額查詢與提升申請 |
 
 ---
 
 ## 技術元件
 
-| 套件 | 用途 |
-|------|------|
-| [google-auth](https://pypi.org/project/google-auth/) | Application Default Credentials 驗證 |
-| [google-cloud-service-usage](https://pypi.org/project/google-cloud-service-usage/) | 啟用 GCP API |
-| [google-cloud-resource-manager](https://pypi.org/project/google-cloud-resource-manager/) | 列出可存取的 GCP 專案 |
-| [google-cloud-quotas](https://pypi.org/project/google-cloud-quotas/) | 查詢與提升配額（Cloud Quotas SDK） |
-| [Playwright](https://playwright.dev/python/) | 瀏覽器自動化（EULA 表單填寫） |
-| [Rich](https://rich.readthedocs.io/) | 終端機美化輸出（表格、Panel、顏色） |
-| [InquirerPy](https://inquirerpy.readthedocs.io/) | 互動式 CLI 選單（select、checkbox、number） |
+| 套件 | 對應 pipeline 階段 | 用途 |
+|------|------|------|
+| [google-auth](https://pypi.org/project/google-auth/) | 身份驗證 | 取用 Application Default Credentials（ADC） |
+| [google-cloud-service-usage](https://pypi.org/project/google-cloud-service-usage/) | 啟用必要 API | 啟用 `aiplatform` / `cloudquotas` |
+| [google-cloud-resource-manager](https://pypi.org/project/google-cloud-resource-manager/) | 專案枚舉 | 列出可存取的 GCP 專案 |
+| [google-cloud-quotas](https://pypi.org/project/google-cloud-quotas/) | 配額查詢 / 提升 | Cloud Quotas SDK 送出提升申請 |
+| [Playwright](https://playwright.dev/python/) | EULA 開通 | 驅動瀏覽器重現 Console 開通流程 |
+| [Rich](https://rich.readthedocs.io/) | 結果回報 | 終端機表格 / Panel / 顏色輸出 |
+| [InquirerPy](https://inquirerpy.readthedocs.io/) | 互動模式 | select / checkbox / number 選單 |
+
+> `:countTokens` 開通偵測、Cloud Billing 檢查與配額 **查詢** 直接以 REST 呼叫（`requests` + ADC token），未經上述 SDK 封裝。
 
 ---
 
@@ -663,7 +712,7 @@ Vertex AI Claude 模型需要計費才能使用。前往工具提示的 Console 
 <details>
 <summary><b>自動填表時 Enable 按鈕找不到</b></summary>
 
-可能該模型已經在此專案中開通，或 GCP Console 頁面結構有變動。工具會顯示提示，可手動至 [Model Garden](https://console.cloud.google.com/vertex-ai/model-garden) 確認。
+工具會以 `hl=en` 鎖定英文介面並精準定位 Enable 按鈕。若仍找不到，通常代表該模型已在此專案開通，或 Console 頁面結構有變動。工具會將當下頁面截圖存至 `debug_screenshots/` 供診斷，並可手動至 [Model Garden](https://console.cloud.google.com/vertex-ai/model-garden) 確認。
 
 </details>
 
