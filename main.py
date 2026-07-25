@@ -45,6 +45,7 @@ DEFAULT_REGION = os.getenv("DEFAULT_REGION", "us-east5")
 # Claude 模型清單：(顯示名稱, GCP base_model dimension 值, Model Garden URL slug)
 # base_model 值必須與 GCP quota dimensions 完全一致（含 anthropic- 前綴）
 CLAUDE_MODELS = [
+    ("Claude Opus 5",     "anthropic-claude-opus-5",               "claude-opus-5"),
     ("Claude Fable 5",    "anthropic-claude-fable-5",             "claude-fable-5"),
     ("Claude Sonnet 5",   "anthropic-claude-sonnet-5",            "claude-sonnet-5"),
     ("Claude 4.8 Opus",   "anthropic-claude-opus-4-8",            "claude-opus-4-8"),

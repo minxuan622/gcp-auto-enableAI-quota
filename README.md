@@ -72,6 +72,7 @@ Anthropic Claude 屬於 Partner Model，其 EULA 與 Advanced AI Safety Addendum
 
 | 模型 | URL slug | GCP base_model ID |
 |------|----------|-------------------|
+| Claude Opus 5     | `claude-opus-5`     | `anthropic-claude-opus-5` |
 | Claude Fable 5    | `claude-fable-5`    | `anthropic-claude-fable-5` |
 | Claude Sonnet 5   | `claude-sonnet-5`   | `anthropic-claude-sonnet-5` |
 | Claude 4.8 Opus   | `claude-opus-4-8`   | `anthropic-claude-opus-4-8` |
