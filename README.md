@@ -52,7 +52,7 @@ Anthropic Claude 屬於 Partner Model，其 EULA 與 Advanced AI Safety Addendum
 - **前置同意流程**：部分新模型在啟用前需先接受 Advanced AI Safety Addendum；工具會自動偵測並完成（開啟條款連結 → 勾選 → Accept Terms → 解鎖 Enable），無此關卡的模型則自動略過偵測。
 - **穩健填表**：企業資訊表單以鍵盤 Tab 循序填寫，降低對頁面 DOM 結構變動的敏感度；條款 checkbox 以多重策略重試確保勾選生效。
 - **登入狀態持久化**：首次登入後保存於 `.browser_state/`，後續免重複登入；批次作業整段共用同一個瀏覽器 session。
-- **兩種瀏覽器模式**：預設由工具啟動內建 Chromium；亦可以 attach 模式透過 CDP 接管使用者自行啟動的 Chrome，工具僅在其中開新分頁操作，結束時只關閉工具開啟的分頁（含流程中由其彈出的分頁），使用者原有的分頁不受影響（見「瀏覽器模式」）。
+- **兩種瀏覽器模式**：預設由工具啟動內建 Chromium；亦可以 attach 模式透過 CDP 接管另外啟動的**獨立 Chrome 視窗**（非日常使用的 Chrome），工具僅在其中開新分頁操作，結束時只關閉工具開啟的分頁（含流程中由其彈出的分頁），使用者原有的分頁不受影響（見「瀏覽器模式」）。
 - **送出失敗自動重試**：開通 partner model 在 Console 背後是一筆 Marketplace 訂單。連續開通多個模型時，Marketplace 可能回應「An error occurred while submitting the request」。工具偵測到此提示會以逐次拉長的間隔（預設 30 / 60 / 120 秒，`SUBMIT_RETRY_WAITS` 可調）重新送出；每次重試前先以 `:countTokens` 確認模型是否已在等待期間生效，已生效即停止重送，避免重複下單。
 - **可稽核性**：操作異常時自動截圖至 `debug_screenshots/`，便於事後診斷。
 
@@ -457,7 +457,7 @@ EULA 開通所用的瀏覽器有兩種模式，以 `.env` 的 `BROWSER_MODE` 設
 | 模式 | 運作方式 | 登入狀態 | 適合情境 |
 |------|---------|---------|---------|
 | **chromium**（預設） | 工具自行啟動 Playwright 內建 Chromium，整批作業共用一個視窗，結束後關閉 | 存於 `.browser_state/` 快照 | 一般使用、headless 遠端執行 |
-| **attach** | 透過 CDP 接管你自行啟動的 Chrome，在其中**另開新分頁**操作，結束時只關閉工具開啟的分頁（含其彈出的分頁） | 由該 Chrome 設定檔自行保存 | 想在自己開的視窗中觀看流程、隨時手動介入 |
+| **attach** | 透過 CDP 接管以指定指令另外啟動的**獨立 Chrome**（與日常使用的 Chrome 是不同視窗、不同設定檔），在其中**另開新分頁**操作，結束時只關閉工具開啟的分頁（含其彈出的分頁） | 由該 Chrome 設定檔自行保存 | 想在自己開的視窗中觀看流程、隨時手動介入 |
 
 **使用 attach 模式：**
 

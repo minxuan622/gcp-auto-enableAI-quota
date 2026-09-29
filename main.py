@@ -39,7 +39,7 @@ BROWSER_STATE_FILE = BROWSER_STATE_DIR / "state.json"
 DEFAULT_REGION = os.getenv("DEFAULT_REGION", "us-east5")
 # 瀏覽器模式：
 #   chromium（預設）— Playwright 內建 Chromium，登入狀態存於 .browser_state/ 快照
-#   attach          — 透過 CDP 接管使用者自行啟動的 Chrome（需以 remote debugging + 獨立設定檔啟動）
+#   attach          — 透過 CDP 接管另外啟動的獨立 Chrome（需以 remote debugging + 獨立設定檔啟動；無法接管日常使用的 Chrome）
 BROWSER_MODES = ("chromium", "attach")
 BROWSER_MODE = os.getenv("BROWSER_MODE", "chromium").strip().lower()
 if BROWSER_MODE not in BROWSER_MODES:
@@ -2560,7 +2560,7 @@ def parse_args() -> argparse.Namespace:
     p_enable.add_argument("--headless", action="store_true",
                           help="以 headless 模式跑瀏覽器（適合遠端執行；attach 模式不適用）")
     p_enable.add_argument("--browser", choices=BROWSER_MODES, default=None,
-                          help="瀏覽器模式：chromium = 內建 Chromium；attach = 接管已開啟的 Chrome。"
+                          help="瀏覽器模式：chromium = 內建 Chromium；attach = 接管另外啟動的獨立 Chrome。"
                                "未指定時使用 .env 的 BROWSER_MODE（預設 chromium）")
     p_enable.add_argument("-y", "--yes", action="store_true", help="跳過確認提示")
 

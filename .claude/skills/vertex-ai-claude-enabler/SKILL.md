@@ -467,6 +467,8 @@ aiplatform.googleapis.com/online_prediction_input_tokens_per_minute_per_base_mod
 - **attach** = `connect_over_cdp(BROWSER_CDP_URL)`，在 `browser.contexts[0]` 開**新分頁**操作；收尾用 `_close_tool_pages()` 關掉工具分頁**以及從工具分頁彈出的所有分頁**（`page.on("popup")` 遞迴追蹤），**絕不 `browser.close()`**（會關掉使用者的 Chrome）。
   - 首次實跑（kevin-480608 / Opus 5.5，開通成功）發現：Agreements 頁勾 Terms 時，`_try_check_terms` 點 label 會誤觸條款文字裡的 Marketplace terms 連結，另開 `cloud.google.com/terms/marketplace/launcher` 分頁（每次都會出現的「checkbox 似乎未勾選，再嘗試一次」很可能也跟這個有關）。chromium 模式結束時整個瀏覽器關掉所以沒人發現；attach 模式會留在使用者 Chrome 裡，因此加了彈出分頁追蹤。勾選邏輯本身尚未修。不讀寫 `.browser_state/`；未登入時導向 accounts.google.com，會 `input()` 請使用者在該分頁登入。
 - **Chrome 136+ 禁止對預設設定檔開 remote debugging**，一定要搭配獨立 `--user-data-dir`（建議 `~/.gcp-claude-manager-chrome`）。所以 attach **接不到使用者日常的 Chrome 設定檔**，也就沒有多帳號 / 擴充功能干擾——不要再跟 Kevin 說「會用到你所有登入帳號」。
+- **attach ≠「在你現有的 Chrome 上操作」**：它接的是另外啟動的第二個 Chrome（Dock 會多一個圖示）。曾把它描述成「接管你自己先開好的 Chrome」讓 Kevin 誤會，描述時一律說「另外啟動的獨立 Chrome」。
+- Chrome 144 有 `chrome://inspect/#remote-debugging`（經使用者允許連上執行中的 Chrome），但 **Chrome 150+ 對預設設定檔再加固**：port 有開、`/json/version` 回 404、不產生 DevToolsActivePort，Playwright / Puppeteer 連不上（chrome-devtools-mcp issue #2283）。Kevin 的 Chrome 是 154。要真正在日常 Chrome 裡操作只剩「做成 Chrome 擴充功能」，屬於重新設計，未做。
 - attach **不支援 headless**，手機 / 遠端情境一律用 chromium。
 - 連不上時 `_make_browser_and_page` 丟 RuntimeError（含 `_attach_launch_hint()` 的 OS 對應指令），`run_enable_session` 把整個 plan 記 FAIL 後返回。
 - 驗證方式：用 scratchpad 的暫存 `--user-data-dir` 開測試 Chrome（port 9223，避開預設 9222），確認開新分頁、`expect_page` 抓得到 Addendum 新分頁、收尾後原分頁與 Chrome 都保留。測試前先 `lsof -iTCP:9222` 確認沒有連到 Kevin 正在用的瀏覽器。
