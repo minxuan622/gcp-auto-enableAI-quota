@@ -37,6 +37,16 @@ BROWSER_SLOW_MO = int(os.getenv("BROWSER_SLOW_MO", "500"))
 BROWSER_STATE_DIR = PROJECT_ROOT / os.getenv("BROWSER_STATE_DIR", ".browser_state")
 BROWSER_STATE_FILE = BROWSER_STATE_DIR / "state.json"
 DEFAULT_REGION = os.getenv("DEFAULT_REGION", "us-east5")
+# 瀏覽器模式：
+#   chromium（預設）— Playwright 內建 Chromium，登入狀態存於 .browser_state/ 快照
+#   attach          — 透過 CDP 接管使用者自行啟動的 Chrome（需以 remote debugging + 獨立設定檔啟動）
+BROWSER_MODES = ("chromium", "attach")
+BROWSER_MODE = os.getenv("BROWSER_MODE", "chromium").strip().lower()
+if BROWSER_MODE not in BROWSER_MODES:
+    print(f"⚠ .env 的 BROWSER_MODE={BROWSER_MODE!r} 無效（可用：{', '.join(BROWSER_MODES)}），改用 chromium",
+          file=sys.stderr)
+    BROWSER_MODE = "chromium"
+BROWSER_CDP_URL = os.getenv("BROWSER_CDP_URL", "http://127.0.0.1:9222")
 # EULA 送出被 Marketplace 拒絕時的重試等待秒數（逐次拉長），逗號分隔
 SUBMIT_RETRY_WAITS = [int(s) for s in os.getenv("SUBMIT_RETRY_WAITS", "30,60,120").split(",") if s.strip()]
 
@@ -595,8 +605,41 @@ def enable_api(project_id: str):
     _enable_single_api(project_id, "cloudquotas.googleapis.com", "Cloud Quotas API")
 
 
+def _attach_launch_hint() -> str:
+    """回傳目前作業系統下，以 attach 模式所需參數啟動 Chrome 的指令。
+
+    Chrome 136 起禁止對「預設設定檔」開啟 remote debugging，因此一定要搭配
+    獨立的 --user-data-dir；該設定檔需自行登入一次 Google 帳號，之後會保留登入。
+    """
+    from urllib.parse import urlparse
+    port = urlparse(BROWSER_CDP_URL).port or 9222
+    if sys.platform == "darwin":
+        return ('"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" '
+                f'--remote-debugging-port={port} --user-data-dir="$HOME/.gcp-claude-manager-chrome"')
+    if sys.platform.startswith("win"):
+        return ('& "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" '
+                f'--remote-debugging-port={port} --user-data-dir="$env:USERPROFILE\\.gcp-claude-manager-chrome"')
+    return f'google-chrome --remote-debugging-port={port} --user-data-dir="$HOME/.gcp-claude-manager-chrome"'
+
+
 def _make_browser_and_page(pw, saved_state: str | None):
-    """建立 browser + context + page，共用此函式以方便重建。"""
+    """建立 browser + context + page，共用此函式以方便重建。
+
+    attach 模式下連上使用者已開啟的 Chrome，並在其中開一個新分頁操作，
+    不會碰使用者既有的分頁。連不上時丟出 RuntimeError（訊息含啟動指令）。
+    """
+    if BROWSER_MODE == "attach":
+        try:
+            browser = pw.chromium.connect_over_cdp(BROWSER_CDP_URL, slow_mo=BROWSER_SLOW_MO, timeout=10000)
+        except Exception as e:
+            raise RuntimeError(
+                f"無法連上 {BROWSER_CDP_URL} 的 Chrome（{str(e).splitlines()[0][:80]}）。\n"
+                f"請先用以下指令啟動 Chrome，並在該視窗登入 Google：\n  {_attach_launch_hint()}"
+            ) from e
+        context = browser.contexts[0] if browser.contexts else browser.new_context()
+        page = context.new_page()
+        return browser, context, page
+
     browser = pw.chromium.launch(
         headless=BROWSER_HEADLESS,
         slow_mo=BROWSER_SLOW_MO,
@@ -621,11 +664,18 @@ def run_enable_session(plan: list[tuple[str, list[tuple]]], config: dict) -> lis
     from playwright._impl._errors import TargetClosedError
 
     form = config["eula_form"]
-    saved_state = _load_browser_state()
+    attach = BROWSER_MODE == "attach"
+    # attach 模式的登入狀態由使用者的 Chrome 設定檔自己保存，不使用 .browser_state/ 快照
+    saved_state = None if attach else _load_browser_state()
     results: list[OpResult] = []
 
     console.print("\n[bold]啟動瀏覽器進行 EULA 自動填表...[/]")
-    if not saved_state:
+    if attach:
+        console.print(
+            f"[cyan]瀏覽器模式：attach[/]（接管 {BROWSER_CDP_URL} 的 Chrome，會開新分頁操作，不影響既有分頁）\n"
+            "[dim]⚠ 請勿關閉工具開啟的分頁，讓腳本自動操作。[/]\n"
+        )
+    elif not saved_state:
         console.print(
             "[bold yellow]首次使用：[/]瀏覽器開啟後請先手動登入 Google 帳號，\n"
             "登入完成後回到終端機按 [bold]Enter[/] 繼續。\n"
@@ -638,10 +688,25 @@ def run_enable_session(plan: list[tuple[str, list[tuple]]], config: dict) -> lis
     processed = 0
 
     with sync_playwright() as pw:
-        browser, context, page = _make_browser_and_page(pw, saved_state)
+        try:
+            browser, context, page = _make_browser_and_page(pw, saved_state)
+        except RuntimeError as e:
+            console.print(f"[red]✗ {e}[/]")
+            for pid, mods in plan:
+                for m in mods:
+                    results.append(OpResult(pid, m[0], "FAIL", "無法連上 attach 模式的 Chrome"))
+            return results
+
+        # ── attach 模式：確認該 Chrome 已登入 Google ──
+        if attach:
+            page.goto("https://console.cloud.google.com/?hl=en", wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(3000)
+            if "accounts.google.com" in page.url:
+                console.print("[bold yellow]此 Chrome 尚未登入 Google。[/]請在工具開啟的分頁中完成登入。")
+                input("\n✋ 登入完成後，請按 Enter 繼續（不要關分頁）→ ")
 
         # ── 首次登入流程 ──
-        if not saved_state:
+        elif not saved_state:
             page.goto("https://console.cloud.google.com/", wait_until="domcontentloaded", timeout=60000)
             console.print("[bold cyan]瀏覽器已開啟 GCP Console。[/]")
             console.print("請在瀏覽器中完成 Google 帳號登入...")
@@ -762,19 +827,28 @@ def run_enable_session(plan: list[tuple[str, list[tuple]]], config: dict) -> lis
                     results.append(OpResult(project_id, display_name, "FAIL", str(e)[:80]))
 
         # 流程結束，更新登入狀態，安全關閉
-        try:
-            _save_browser_state(context)
-        except Exception:
-            pass
-        console.print("\n[dim]自動填表流程結束，瀏覽器將在 3 秒後關閉...[/]")
-        try:
-            page.wait_for_timeout(3000)
-        except Exception:
-            pass  # 瀏覽器已被手動關閉，不影響結果
-        try:
-            browser.close()
-        except Exception:
-            pass
+        if attach:
+            # 只關工具自己開的分頁；使用者的 Chrome 與其他分頁保留
+            console.print("\n[dim]自動填表流程結束，工具開啟的分頁將在 3 秒後關閉（你的 Chrome 會保留）...[/]")
+            try:
+                page.wait_for_timeout(3000)
+                page.close()
+            except Exception:
+                pass
+        else:
+            try:
+                _save_browser_state(context)
+            except Exception:
+                pass
+            console.print("\n[dim]自動填表流程結束，瀏覽器將在 3 秒後關閉...[/]")
+            try:
+                page.wait_for_timeout(3000)
+            except Exception:
+                pass  # 瀏覽器已被手動關閉，不影響結果
+            try:
+                browser.close()
+            except Exception:
+                pass
 
     return results
 
@@ -2077,7 +2151,12 @@ def run_batch_enable(
         console.print(f"  [cyan]{pid}[/]")
         for m in mods:
             console.print(f"    • {m[0]} [dim]({m[2]})[/]")
-    if headless:
+    if BROWSER_MODE == "attach":
+        console.print(f"  瀏覽器: [cyan]attach[/]（接管 {BROWSER_CDP_URL} 的 Chrome）")
+        if headless:
+            console.print("  [yellow]attach 模式使用你開啟的 Chrome 視窗，--headless 不適用，已忽略[/]")
+            headless = False
+    elif headless:
         console.print("  模式: [yellow]headless（不顯示瀏覽器視窗）[/]")
 
     # 確認
@@ -2133,6 +2212,9 @@ def cmd_enable(args):
     console.print(f"\n[bold]即將處理 {len(project_ids)} 個專案 × {len(models)} 個模型[/]")
     for pid in project_ids:
         console.print(f"  • [cyan]{pid}[/]")
+
+    if args.browser:
+        globals()["BROWSER_MODE"] = args.browser
 
     results = run_batch_enable(
         project_ids, models, config,
@@ -2455,7 +2537,10 @@ def parse_args() -> argparse.Namespace:
     p_enable.add_argument("--models",  required=True,
                           help=f"模型 URL slug，逗號分隔。可用：{_available_slugs()}")
     p_enable.add_argument("--headless", action="store_true",
-                          help="以 headless 模式跑瀏覽器（適合遠端執行）")
+                          help="以 headless 模式跑瀏覽器（適合遠端執行；attach 模式不適用）")
+    p_enable.add_argument("--browser", choices=BROWSER_MODES, default=None,
+                          help="瀏覽器模式：chromium = 內建 Chromium；attach = 接管已開啟的 Chrome。"
+                               "未指定時使用 .env 的 BROWSER_MODE（預設 chromium）")
     p_enable.add_argument("-y", "--yes", action="store_true", help="跳過確認提示")
 
     # quota

@@ -460,6 +460,15 @@ aiplatform.googleapis.com/online_prediction_input_tokens_per_minute_per_base_mod
 - **成因未完全確認**。查到 Cloud Commerce Consumer Procurement API 有 `WriteRequestsPerMinutePerProjectPerUser = 10`，但工具約 1 模型 / 分鐘、手動更慢，單靠這個配額解釋不了。另一個可能是前一筆訂單仍在處理中就送下一筆被拒。**不要跟 Kevin 講得像已確定。**
 - 目標專案上該 API 是 DISABLED 但開通照樣成功 → Console 下單不扣目標專案的配額，限制可能跟著使用者走、跨專案累計。
 - 實作：Next 與 Agree 兩個送出點之後都呼叫 `_retry_on_submit_error()`：偵測提示 → 關閉 → 等 `SUBMIT_RETRY_WAITS`（預設 30/60/120 秒）→ 先 `is_model_enabled` 確認是否已生效（避免重複下單）→ 重按同一顆按鈕。以本機模擬頁驗證過四種情境（無錯 / 重試成功 / 用盡 / 等待中已生效），**尚未在真實觸發的情況下驗證**。
+
+**瀏覽器模式：chromium / attach（2026-09）**
+
+- `BROWSER_MODE`（.env）設預設，`enable --browser` 臨時覆蓋；互動模式只看 .env。Kevin 選了這兩種，沒有做「launch 正式版 Chrome + 持久設定檔」的第三種。
+- **attach** = `connect_over_cdp(BROWSER_CDP_URL)`，在 `browser.contexts[0]` 開**新分頁**操作；收尾只 `page.close()`，**絕不 `browser.close()`**（會關掉使用者的 Chrome）。不讀寫 `.browser_state/`；未登入時導向 accounts.google.com，會 `input()` 請使用者在該分頁登入。
+- **Chrome 136+ 禁止對預設設定檔開 remote debugging**，一定要搭配獨立 `--user-data-dir`（建議 `~/.gcp-claude-manager-chrome`）。所以 attach **接不到使用者日常的 Chrome 設定檔**，也就沒有多帳號 / 擴充功能干擾——不要再跟 Kevin 說「會用到你所有登入帳號」。
+- attach **不支援 headless**，手機 / 遠端情境一律用 chromium。
+- 連不上時 `_make_browser_and_page` 丟 RuntimeError（含 `_attach_launch_hint()` 的 OS 對應指令），`run_enable_session` 把整個 plan 記 FAIL 後返回。
+- 驗證方式：用 scratchpad 的暫存 `--user-data-dir` 開測試 Chrome（port 9223，避開預設 9222），確認開新分頁、`expect_page` 抓得到 Addendum 新分頁、收尾後原分頁與 Chrome 都保留。測試前先 `lsof -iTCP:9222` 確認沒有連到 Kevin 正在用的瀏覽器。
 | 新模型 Enable 一直 disabled | 多半是 Addendum 沒接受成功——non-headless 觀察 `_handle_safety_addendum` 卡在哪步 |
 
 Debug 時先 non-headless + `BROWSER_SLOW_MO=1500` 慢速觀察。
