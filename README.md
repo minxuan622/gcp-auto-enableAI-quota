@@ -82,7 +82,6 @@ Anthropic Claude 屬於 Partner Model，其 EULA 與 Advanced AI Safety Addendum
 | Claude 4.7 Opus   | `claude-opus-4-7`   | `anthropic-claude-opus-4-7`   | 版本獨立 |
 | Claude 4.6 Opus   | `claude-opus-4-6`   | `anthropic-claude-opus-4-6`   | 版本獨立 |
 | Claude 4.6 Sonnet | `claude-sonnet-4-6` | `anthropic-claude-sonnet-4-6` | 版本獨立 |
-| Claude 4.5 Sonnet | `claude-sonnet-4-5` | `anthropic-claude-sonnet-4-5` | 版本獨立 |
 | Claude 4.5 Opus   | `claude-opus-4-5`   | `anthropic-claude-opus-4-5`   | 版本獨立 |
 | Claude 4.5 Haiku  | `claude-haiku-4-5`  | `anthropic-claude-haiku-4-5`  | 版本獨立 |
 
