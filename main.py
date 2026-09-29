@@ -622,6 +622,26 @@ def _attach_launch_hint() -> str:
     return f'google-chrome --remote-debugging-port={port} --user-data-dir="$HOME/.gcp-claude-manager-chrome"'
 
 
+# attach 模式下由工具開出的分頁（含從這些分頁彈出的新分頁，例如點到條款連結）。
+# 收尾時只關這些，使用者原本開著的分頁不在其中。
+_ATTACH_TOOL_PAGES: list = []
+
+
+def _track_tool_page(page):
+    _ATTACH_TOOL_PAGES.append(page)
+    page.on("popup", _track_tool_page)
+
+
+def _close_tool_pages():
+    for p in _ATTACH_TOOL_PAGES:
+        try:
+            if not p.is_closed():
+                p.close()
+        except Exception:
+            pass
+    _ATTACH_TOOL_PAGES.clear()
+
+
 def _make_browser_and_page(pw, saved_state: str | None):
     """建立 browser + context + page，共用此函式以方便重建。
 
@@ -638,6 +658,7 @@ def _make_browser_and_page(pw, saved_state: str | None):
             ) from e
         context = browser.contexts[0] if browser.contexts else browser.new_context()
         page = context.new_page()
+        _track_tool_page(page)
         return browser, context, page
 
     browser = pw.chromium.launch(
@@ -828,13 +849,13 @@ def run_enable_session(plan: list[tuple[str, list[tuple]]], config: dict) -> lis
 
         # 流程結束，更新登入狀態，安全關閉
         if attach:
-            # 只關工具自己開的分頁；使用者的 Chrome 與其他分頁保留
+            # 只關工具自己開的分頁（含其彈出的分頁）；使用者的 Chrome 與原有分頁保留
             console.print("\n[dim]自動填表流程結束，工具開啟的分頁將在 3 秒後關閉（你的 Chrome 會保留）...[/]")
             try:
                 page.wait_for_timeout(3000)
-                page.close()
             except Exception:
                 pass
+            _close_tool_pages()
         else:
             try:
                 _save_browser_state(context)

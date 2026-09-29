@@ -464,7 +464,8 @@ aiplatform.googleapis.com/online_prediction_input_tokens_per_minute_per_base_mod
 **瀏覽器模式：chromium / attach（2026-09）**
 
 - `BROWSER_MODE`（.env）設預設，`enable --browser` 臨時覆蓋；互動模式只看 .env。Kevin 選了這兩種，沒有做「launch 正式版 Chrome + 持久設定檔」的第三種。
-- **attach** = `connect_over_cdp(BROWSER_CDP_URL)`，在 `browser.contexts[0]` 開**新分頁**操作；收尾只 `page.close()`，**絕不 `browser.close()`**（會關掉使用者的 Chrome）。不讀寫 `.browser_state/`；未登入時導向 accounts.google.com，會 `input()` 請使用者在該分頁登入。
+- **attach** = `connect_over_cdp(BROWSER_CDP_URL)`，在 `browser.contexts[0]` 開**新分頁**操作；收尾用 `_close_tool_pages()` 關掉工具分頁**以及從工具分頁彈出的所有分頁**（`page.on("popup")` 遞迴追蹤），**絕不 `browser.close()`**（會關掉使用者的 Chrome）。
+  - 首次實跑（kevin-480608 / Opus 5.5，開通成功）發現：Agreements 頁勾 Terms 時，`_try_check_terms` 點 label 會誤觸條款文字裡的 Marketplace terms 連結，另開 `cloud.google.com/terms/marketplace/launcher` 分頁（每次都會出現的「checkbox 似乎未勾選，再嘗試一次」很可能也跟這個有關）。chromium 模式結束時整個瀏覽器關掉所以沒人發現；attach 模式會留在使用者 Chrome 裡，因此加了彈出分頁追蹤。勾選邏輯本身尚未修。不讀寫 `.browser_state/`；未登入時導向 accounts.google.com，會 `input()` 請使用者在該分頁登入。
 - **Chrome 136+ 禁止對預設設定檔開 remote debugging**，一定要搭配獨立 `--user-data-dir`（建議 `~/.gcp-claude-manager-chrome`）。所以 attach **接不到使用者日常的 Chrome 設定檔**，也就沒有多帳號 / 擴充功能干擾——不要再跟 Kevin 說「會用到你所有登入帳號」。
 - attach **不支援 headless**，手機 / 遠端情境一律用 chromium。
 - 連不上時 `_make_browser_and_page` 丟 RuntimeError（含 `_attach_launch_hint()` 的 OS 對應指令），`run_enable_session` 把整個 plan 記 FAIL 後返回。
