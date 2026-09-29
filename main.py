@@ -44,11 +44,20 @@ DEFAULT_REGION = os.getenv("DEFAULT_REGION", "us-east5")
 
 # Claude 模型清單：(顯示名稱, GCP base_model dimension 值, Model Garden URL slug)
 # base_model 值必須與 GCP quota dimensions 完全一致（含 anthropic- 前綴）
+#
+# 配額 dimension 分兩代：
+#   - 4.7 以前：每個版本各自一個配額池（anthropic-claude-opus-4-7 …）
+#   - 4.8 之後：同家族「共用」一個配額池（anthropic-claude-opus / -sonnet / -fable），
+#     新版本上線自動沿用家族配額，不會出現帶版本號的 dimension。
+#     因此多個模型可以指向同一個 base_model；提升其中一個等於提升整個家族。
 CLAUDE_MODELS = [
-    ("Claude Opus 5",     "anthropic-claude-opus-5",               "claude-opus-5"),
-    ("Claude Fable 5",    "anthropic-claude-fable-5",             "claude-fable-5"),
-    ("Claude Sonnet 5",   "anthropic-claude-sonnet-5",            "claude-sonnet-5"),
-    ("Claude 4.8 Opus",   "anthropic-claude-opus-4-8",            "claude-opus-4-8"),
+    ("Claude Opus 5.5",   "anthropic-claude-opus",                "claude-opus-5-5"),
+    ("Claude Sonnet 5.5", "anthropic-claude-sonnet",              "claude-sonnet-5-5"),
+    ("Claude Fable 5.1",  "anthropic-claude-fable",               "claude-fable-5-1"),
+    ("Claude Opus 5",     "anthropic-claude-opus",                "claude-opus-5"),
+    ("Claude Fable 5",    "anthropic-claude-fable",               "claude-fable-5"),
+    ("Claude Sonnet 5",   "anthropic-claude-sonnet",              "claude-sonnet-5"),
+    ("Claude 4.8 Opus",   "anthropic-claude-opus",                "claude-opus-4-8"),
     ("Claude 4.7 Opus",   "anthropic-claude-opus-4-7",            "claude-opus-4-7"),
     ("Claude 4.6 Opus",   "anthropic-claude-opus-4-6",            "claude-opus-4-6"),
     ("Claude 4.6 Sonnet", "anthropic-claude-sonnet-4-6",          "claude-sonnet-4-6"),
@@ -2190,10 +2199,16 @@ def run_batch_quota(
     批次配額提升：逐專案呼叫 _quota_one_project。
     先顯示計畫（專案清單 + 目標值）→ 確認 → 執行。
     """
-    display_name, _bm, _slug = model
+    display_name, base_model, _slug = model
 
     # 計畫摘要
     console.print(f"\n[bold]即將對 {len(project_ids)} 個專案提升 {display_name} / {routing} 配額：[/]")
+    siblings = [m[0] for m in CLAUDE_MODELS if m[1] == base_model and m[0] != display_name]
+    if siblings:
+        console.print(
+            f"[yellow]ⓘ 此配額為家族共用池（{base_model}），"
+            f"同時適用於：{display_name}、{'、'.join(siblings)}[/]"
+        )
     for pid in project_ids:
         console.print(f"  • [cyan]{pid}[/]")
     console.print(f"\n[bold]目標值：[/]")

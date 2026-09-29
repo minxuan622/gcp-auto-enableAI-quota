@@ -57,27 +57,32 @@ Grep pattern="CLAUDE_MODELS" path="main.py" -A 10
 
 **如果已在清單中** → 跳 Step 3。
 
-**如果不在清單中** → WebFetch 驗證 Vertex AI 是否已上架：
+**如果不在清單中** → 用 publisher models API 列出 Vertex 上實際存在的 anthropic 模型（**最可靠，slug 直接來自 API，不用猜**）：
 
+```bash
+TOKEN=$(gcloud auth application-default print-access-token)
+curl -s "https://aiplatform.googleapis.com/v1beta1/publishers/anthropic/models?pageSize=100" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Goog-User-Project: <任一專案>"
+# name 欄位 = publishers/anthropic/models/<slug>
 ```
-WebFetch url="https://platform.claude.com/docs/en/api/claude-on-vertex-ai"
-        prompt="Is Claude <Family> <Version> available on Vertex AI? What is the exact base_model ID and URL slug?"
-```
+
+注意要打 **global** endpoint（`aiplatform.googleapis.com`，不帶區域前綴），區域 endpoint 的清單不完整。
 
 - 上架了 → Step 2
 - 沒上架 → 誠實告訴 Kevin「還沒上架，Vertex AI 通常晚幾天」，**不要**硬塞進清單
 
-#### Step 2：加入 `CLAUDE_MODELS`
+#### Step 2：加入 `CLAUDE_MODELS`（base_model 要實查，見下）
 
 Edit `main.py`，在 `CLAUDE_MODELS` 最頂端加一列（新的在前）：
 
 ```python
-("Claude 4.7 Opus", "anthropic-claude-opus-4-7", "claude-opus-4-7"),
+("Claude Opus 5.5", "anthropic-claude-opus", "claude-opus-5-5"),   # 4.8 之後：家族共用
+("Claude 4.7 Opus", "anthropic-claude-opus-4-7", "claude-opus-4-7"),  # 4.7 以前：版本獨立
 ```
 
 格式：`(display_name, base_model, url_slug)`
-- `base_model` **帶** `anthropic-` 前綴
-- `url_slug` **不帶** `anthropic-` 也**不帶**日期
+- `url_slug` = publisher API 回傳的 slug（不帶 `anthropic-`、不帶日期）
+- `base_model` = **Cloud Quotas 裡實際存在的 dimension**，4.8 之後是家族名（`anthropic-claude-opus` / `-sonnet` / `-fable`），**不是** `anthropic-<slug>`。規則詳見 Part B「CLAUDE_MODELS 格式」。
 
 #### Step 3：chat 確認目標
 
@@ -276,26 +281,37 @@ Tuple 三元素，**順序不可顛倒**：
 
 | 欄位 | 命名規則 | 範例 |
 |------|---------|------|
-| `display_name` | `Claude <版本> <家族>` | `"Claude 4.7 Opus"` |
-| `base_model_dimension` | `anthropic-claude-<家族>-<版本>`（含前綴，不含日期） | `"anthropic-claude-opus-4-7"` |
-| `url_slug` | `claude-<家族>-<版本>`（不含前綴，不含日期） | `"claude-opus-4-7"` |
+| `display_name` | 5 世代起 `Claude <家族> <版本>`；4.x 沿用 `Claude <版本> <家族>` | `"Claude Opus 5.5"` / `"Claude 4.7 Opus"` |
+| `base_model_dimension` | **4.7 以前**：`anthropic-claude-<家族>-<版本>`（版本獨立配額）<br>**4.8 之後**：`anthropic-claude-<家族>`（家族共用配額） | `"anthropic-claude-opus-4-7"` / `"anthropic-claude-opus"` |
+| `url_slug` | publisher API 的 slug（不含前綴、不含日期） | `"claude-opus-5-5"` |
+
+**⚠ 家族共用配額（2026-09 實查確認，GCP 官方文件亦載明）**：Opus 4.8 之後的所有 Opus 版本扣同一個 `anthropic-claude-opus` 配額池，Sonnet / Fable 同理；新版本上線「自動沿用家族配額」，Cloud Quotas 裡**不會**出現 `anthropic-claude-opus-5-5` 這種帶版本號的 dimension。曾經把 Opus 5 / Sonnet 5 / Fable 5 / 4.8 Opus 誤寫成 `anthropic-<slug>`，導致這 4 個模型的配額查詢 / 提升**全部靜默失敗**（開通不受影響，因為開通用 slug）。
+
+**影響**：多個模型可以指向同一個 base_model；`run_batch_quota` 會自動顯示「此配額為家族共用池，同時適用於…」提示，避免 Kevin 誤以為只改到單一版本。
 
 **歷史教訓**：早期 4.5 系列曾誤寫成 `claude-sonnet-4-5-20250514`（帶日期），Vertex AI 現在一律用不帶日期的 alias。加新模型時**嚴格遵守不含日期**。
 
 ### 新增模型完整步驟
 
-1. **WebFetch 驗證上架**：
+1. **publisher API 確認上架 + 取得 slug**（見 Part A Step 1 的 curl）
+2. **實查 base_model dimension**——列出專案裡所有 Claude 相關 dimension，找新模型對應的是版本層級還是家族層級：
+   ```python
+   from google.cloud import cloudquotas_v1
+   c = cloudquotas_v1.CloudQuotasClient()
+   parent = "projects/<proj>/locations/global/services/aiplatform.googleapis.com"
+   {dict(d.dimensions).get("base_model") for q in c.list_quota_infos(parent=parent)
+    for d in q.dimensions_infos if "claude" in dict(d.dimensions).get("base_model","")}
    ```
-   WebFetch url="https://platform.claude.com/docs/en/api/claude-on-vertex-ai"
-   ```
-2. **Edit `CLAUDE_MODELS`** 在最頂端加一列
-3. **驗證 CLI help 自動更新**：
+   有 `anthropic-<slug>` → 用它（版本獨立）；沒有 → 用家族名 `anthropic-claude-<家族>`。
+3. **Edit `CLAUDE_MODELS`** 在最頂端加一列
+4. **驗證配額查得到**：`main.get_quota_info(<proj>, <base_model>, strict=False)` 回傳 > 0 筆
+5. **驗證 CLI help 自動更新**：
    ```bash
    python main.py enable --help | grep <new_slug>
    ```
-4. **sandbox 端對端測試**：
+6. **sandbox 端對端測試**：
    ```bash
-   python main.py enable --project <sandbox> --models <new_slug> --yes
+   .venv/bin/python main.py enable --project <sandbox> --models <new_slug> --yes
    ```
 
 CLAUDE_MODELS 會自動灌進 argparse help 和互動選單，不需要改別處。
