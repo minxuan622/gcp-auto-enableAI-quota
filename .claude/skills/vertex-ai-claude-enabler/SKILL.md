@@ -451,6 +451,15 @@ aiplatform.googleapis.com/online_prediction_input_tokens_per_minute_per_base_mod
 | 下拉選單不展開 | 調 `_tab_select_dropdown` 的 key 序列（ArrowDown/Enter） |
 | Terms checkbox 點不到 | 檢查 `_is_checkbox_checked` 的 `aria-checked` 讀法 |
 | Accept Terms 點了沒反應 | 確認連結有先點開（checkbox 才解鎖）；檢查 `_handle_safety_addendum` 的 `context.expect_page` 有無捕捉到新分頁 |
+| 連續開通時跳「An error occurred while submitting the request」 | Marketplace 拒絕訂單，見下方「Marketplace 送出失敗」；已由 `_retry_on_submit_error` 自動等待重試 |
+
+**Marketplace 送出失敗（2026-09）**
+
+- 開通 partner model = 在 Marketplace 下一筆訂單（questionnaire URL 帶 `mp=anthropic/...cloudpartnerservices.goog`）。錯誤訊息明講「Marketplace & Agent Platform API」。
+- 現象：手動連開到第 2 個就失敗；同仁用自己的 Chrome 開 3 專案 × 5 模型後，第 4 個專案只成功 1 個。**換 session 仍發生 → 伺服器端限制，不是瀏覽器 session 問題。**
+- **成因未完全確認**。查到 Cloud Commerce Consumer Procurement API 有 `WriteRequestsPerMinutePerProjectPerUser = 10`，但工具約 1 模型 / 分鐘、手動更慢，單靠這個配額解釋不了。另一個可能是前一筆訂單仍在處理中就送下一筆被拒。**不要跟 Kevin 講得像已確定。**
+- 目標專案上該 API 是 DISABLED 但開通照樣成功 → Console 下單不扣目標專案的配額，限制可能跟著使用者走、跨專案累計。
+- 實作：Next 與 Agree 兩個送出點之後都呼叫 `_retry_on_submit_error()`：偵測提示 → 關閉 → 等 `SUBMIT_RETRY_WAITS`（預設 30/60/120 秒）→ 先 `is_model_enabled` 確認是否已生效（避免重複下單）→ 重按同一顆按鈕。以本機模擬頁驗證過四種情境（無錯 / 重試成功 / 用盡 / 等待中已生效），**尚未在真實觸發的情況下驗證**。
 | 新模型 Enable 一直 disabled | 多半是 Addendum 沒接受成功——non-headless 觀察 `_handle_safety_addendum` 卡在哪步 |
 
 Debug 時先 non-headless + `BROWSER_SLOW_MO=1500` 慢速觀察。

@@ -52,6 +52,7 @@ Anthropic Claude 屬於 Partner Model，其 EULA 與 Advanced AI Safety Addendum
 - **前置同意流程**：部分新模型在啟用前需先接受 Advanced AI Safety Addendum；工具會自動偵測並完成（開啟條款連結 → 勾選 → Accept Terms → 解鎖 Enable），無此關卡的模型則自動略過偵測。
 - **穩健填表**：企業資訊表單以鍵盤 Tab 循序填寫，降低對頁面 DOM 結構變動的敏感度；條款 checkbox 以多重策略重試確保勾選生效。
 - **登入狀態持久化**：首次登入後保存於 `.browser_state/`，後續免重複登入；批次作業整段共用同一個瀏覽器 session。
+- **送出失敗自動重試**：開通 partner model 在 Console 背後是一筆 Marketplace 訂單。連續開通多個模型時，Marketplace 可能回應「An error occurred while submitting the request」。工具偵測到此提示會以逐次拉長的間隔（預設 30 / 60 / 120 秒，`SUBMIT_RETRY_WAITS` 可調）重新送出；每次重試前先以 `:countTokens` 確認模型是否已在等待期間生效，已生效即停止重送，避免重複下單。
 - **可稽核性**：操作異常時自動截圖至 `debug_screenshots/`，便於事後診斷。
 
 ---
@@ -698,6 +699,15 @@ Vertex AI Claude 模型需要計費才能使用。前往工具提示的 Console 
 <summary><b>出現「Terms of service have not been accepted」彈窗</b></summary>
 
 Angular Material 的 checkbox 元件有時點擊未生效。工具會自動偵測此彈窗、關閉、重新勾選 checkbox 並重試（最多 3 次）。若仍失敗，請在瀏覽器中手動勾選 checkbox 再點 Agree。
+
+</details>
+
+<details>
+<summary><b>連續開通多個模型時出現「An error occurred while submitting the request」</b></summary>
+
+這是 Marketplace 拒絕了該次開通訂單，常見於短時間內連續開通多個模型，與使用哪個瀏覽器或 session 無關。工具會自動等待並重試（預設 30 / 60 / 120 秒）；若重試用盡仍失敗，該筆會記為 FAIL 並寫入 `failed-projects.txt`，稍後再以 `--projects-file failed-projects.txt` 重跑即可。
+
+大批次作業若經常觸發，可在 `.env` 調大等待時間，例如 `SUBMIT_RETRY_WAITS=60,120,300`。
 
 </details>
 

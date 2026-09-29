@@ -37,6 +37,8 @@ BROWSER_SLOW_MO = int(os.getenv("BROWSER_SLOW_MO", "500"))
 BROWSER_STATE_DIR = PROJECT_ROOT / os.getenv("BROWSER_STATE_DIR", ".browser_state")
 BROWSER_STATE_FILE = BROWSER_STATE_DIR / "state.json"
 DEFAULT_REGION = os.getenv("DEFAULT_REGION", "us-east5")
+# EULA 送出被 Marketplace 拒絕時的重試等待秒數（逐次拉長），逗號分隔
+SUBMIT_RETRY_WAITS = [int(s) for s in os.getenv("SUBMIT_RETRY_WAITS", "30,60,120").split(",") if s.strip()]
 
 # ──────────────────────────────────────────────
 # 常數定義
@@ -741,7 +743,10 @@ def run_enable_session(plan: list[tuple[str, list[tuple]]], config: dict) -> lis
                     # 使用「循序 Tab 填表法」：
                     # 表單欄位順序固定，從第一個欄位開始，用 Tab 逐一跳到下一欄。
                     # 不依賴 CSS 選擇器，最穩定。
-                    status, note = _fill_form_sequential(page, form, display_name)
+                    status, note = _fill_form_sequential(
+                        page, form, display_name,
+                        enabled_check=lambda pid=project_id, s=garden_slug: is_model_enabled(pid, s),
+                    )
                     results.append(OpResult(project_id, display_name, status, note))
 
                 except PwTimeout:
@@ -779,7 +784,61 @@ def auto_fill_eula(project_id: str, models: list[tuple], config: dict) -> list[O
     return run_enable_session([(project_id, models)], config)
 
 
-def _fill_form_sequential(page, form: dict, display_name: str) -> tuple[str, str]:
+SUBMIT_ERROR_TEXT = "An error occurred while submitting the request"
+
+
+def _submit_error_visible(page, timeout_ms: int = 4000) -> bool:
+    """送出後是否出現 Marketplace 的送出失敗提示（snackbar）。"""
+    try:
+        page.locator(f':text("{SUBMIT_ERROR_TEXT}")').first.wait_for(state="visible", timeout=timeout_ms)
+        return True
+    except Exception:
+        return False
+
+
+def _dismiss_submit_error(page):
+    """關閉送出失敗提示；關不掉也無妨，重試時會被新提示覆蓋。"""
+    try:
+        bar = page.locator(f'*:has(> :text("{SUBMIT_ERROR_TEXT}"))').last
+        bar.locator('button').last.click(timeout=2000)
+    except Exception:
+        pass
+
+
+def _retry_on_submit_error(page, reclick, step_label: str, enabled_check=None) -> tuple[str, str | None]:
+    """
+    點擊送出類按鈕後呼叫。若出現 Marketplace 送出失敗提示，等待後重按同一顆按鈕。
+
+    成因推測為 Marketplace 下單的頻率限制，或前一筆訂單仍在處理中；兩者都會隨時間
+    解除，所以等待時間逐次拉長（SUBMIT_RETRY_WAITS）。每次重試前先用 enabled_check
+    確認模型是否已經生效，已生效就不再重送，避免重複下單。
+
+    回傳：
+      ("ok",      None)   沒有錯誤，或重試後成功送出
+      ("enabled", note)   等待期間模型已生效，不需再送出
+      ("fail",    note)   重試用盡仍失敗
+    """
+    for i, wait_s in enumerate(SUBMIT_RETRY_WAITS, 1):
+        if not _submit_error_visible(page):
+            return "ok", None
+        _dismiss_submit_error(page)
+        console.print(
+            f"  [yellow]⚠ Marketplace 拒絕送出（{step_label}），可能為下單頻率限制或前一筆訂單仍在處理，"
+            f"{wait_s} 秒後重試（{i}/{len(SUBMIT_RETRY_WAITS)}）[/]"
+        )
+        page.wait_for_timeout(wait_s * 1000)
+        if enabled_check and enabled_check():
+            console.print("  [green]✓[/] 等待期間模型已生效，不再重送")
+            return "enabled", "等待重試期間確認已開通"
+        reclick()
+        page.wait_for_timeout(3000)
+
+    if _submit_error_visible(page):
+        return "fail", f"Marketplace 拒絕送出，重試 {len(SUBMIT_RETRY_WAITS)} 次仍失敗（{step_label}）"
+    return "ok", None
+
+
+def _fill_form_sequential(page, form: dict, display_name: str, enabled_check=None) -> tuple[str, str]:
     """
     用 Tab 鍵循序填寫 EULA 表單。
     回傳 (status, note)：
@@ -867,6 +926,12 @@ def _fill_form_sequential(page, form: dict, display_name: str) -> tuple[str, str
     next_btn = page.locator('button:has-text("Next")').first
     if next_btn.is_visible(timeout=3000):
         next_btn.click()
+        outcome, note = _retry_on_submit_error(page, next_btn.click, "表單第一頁", enabled_check)
+        if outcome == "enabled":
+            return "DONE", note
+        if outcome == "fail":
+            console.print(f"  [red]✗ {note}[/]")
+            return "FAIL", note
         console.print(f"  [green]✓[/] {display_name} 表單第一頁已送出")
     else:
         console.print("  [yellow]未找到 Next 按鈕，請手動確認[/]")
@@ -909,6 +974,13 @@ def _fill_form_sequential(page, form: dict, display_name: str) -> tuple[str, str
         except Exception:
             console.print(f"  [yellow]⚠ 未找到 Agree 按鈕，請手動點擊完成開通[/]")
             return "FAIL", "未找到 Agree 按鈕"
+
+        outcome, note = _retry_on_submit_error(page, agree_btn.click, "Agree", enabled_check)
+        if outcome == "enabled":
+            return "DONE", note
+        if outcome == "fail":
+            console.print(f"  [red]✗ {note}[/]")
+            return "FAIL", note
 
         # ── 檢查是否彈出「Terms not accepted」錯誤 ──
         error_dialog = page.locator('text="Terms of service have not been accepted"')
