@@ -452,6 +452,9 @@ aiplatform.googleapis.com/online_prediction_input_tokens_per_minute_per_base_mod
 | Terms checkbox 點不到 | 檢查 `_is_checkbox_checked` 的 `aria-checked` 讀法 |
 | Accept Terms 點了沒反應 | 確認連結有先點開（checkbox 才解鎖）；檢查 `_handle_safety_addendum` 的 `context.expect_page` 有無捕捉到新分頁 |
 | 連續開通時跳「An error occurred while submitting the request」 | Marketplace 拒絕訂單，見下方「Marketplace 送出失敗」；已由 `_retry_on_submit_error` 自動等待重試 |
+| 新模型 Enable 一直 disabled | 多半是 Addendum 沒接受成功——non-headless 觀察 `_handle_safety_addendum` 卡在哪步 |
+
+Debug 時先 non-headless + `BROWSER_SLOW_MO=1500` 慢速觀察。
 
 **Marketplace 送出失敗（2026-09）**
 
@@ -461,20 +464,9 @@ aiplatform.googleapis.com/online_prediction_input_tokens_per_minute_per_base_mod
 - 目標專案上該 API 是 DISABLED 但開通照樣成功 → Console 下單不扣目標專案的配額，限制可能跟著使用者走、跨專案累計。
 - 實作：Next 與 Agree 兩個送出點之後都呼叫 `_retry_on_submit_error()`：偵測提示 → 關閉 → 等 `SUBMIT_RETRY_WAITS`（預設 30/60/120 秒）→ 先 `is_model_enabled` 確認是否已生效（避免重複下單）→ 重按同一顆按鈕。以本機模擬頁驗證過四種情境（無錯 / 重試成功 / 用盡 / 等待中已生效），**尚未在真實觸發的情況下驗證**。
 
-**瀏覽器模式：chromium / attach（2026-09）**
+**已試過並移除：attach 瀏覽器模式（2026-09）**
 
-- `BROWSER_MODE`（.env）設預設，`enable --browser` 臨時覆蓋；互動模式只看 .env。Kevin 選了這兩種，沒有做「launch 正式版 Chrome + 持久設定檔」的第三種。
-- **attach** = `connect_over_cdp(BROWSER_CDP_URL)`，在 `browser.contexts[0]` 開**新分頁**操作；收尾用 `_close_tool_pages()` 關掉工具分頁**以及從工具分頁彈出的所有分頁**（`page.on("popup")` 遞迴追蹤），**絕不 `browser.close()`**（會關掉使用者的 Chrome）。
-  - 首次實跑（kevin-480608 / Opus 5.5，開通成功）發現：Agreements 頁勾 Terms 時，`_try_check_terms` 點 label 會誤觸條款文字裡的 Marketplace terms 連結，另開 `cloud.google.com/terms/marketplace/launcher` 分頁（每次都會出現的「checkbox 似乎未勾選，再嘗試一次」很可能也跟這個有關）。chromium 模式結束時整個瀏覽器關掉所以沒人發現；attach 模式會留在使用者 Chrome 裡，因此加了彈出分頁追蹤。勾選邏輯本身尚未修。不讀寫 `.browser_state/`；未登入時導向 accounts.google.com，會 `input()` 請使用者在該分頁登入。
-- **Chrome 136+ 禁止對預設設定檔開 remote debugging**，一定要搭配獨立 `--user-data-dir`（建議 `~/.gcp-claude-manager-chrome`）。所以 attach **接不到使用者日常的 Chrome 設定檔**，也就沒有多帳號 / 擴充功能干擾——不要再跟 Kevin 說「會用到你所有登入帳號」。
-- **attach ≠「在你現有的 Chrome 上操作」**：它接的是另外啟動的第二個 Chrome（Dock 會多一個圖示）。曾把它描述成「接管你自己先開好的 Chrome」讓 Kevin 誤會，描述時一律說「另外啟動的獨立 Chrome」。
-- Chrome 144 有 `chrome://inspect/#remote-debugging`（經使用者允許連上執行中的 Chrome），但 **Chrome 150+ 對預設設定檔再加固**：port 有開、`/json/version` 回 404、不產生 DevToolsActivePort，Playwright / Puppeteer 連不上（chrome-devtools-mcp issue #2283）。Kevin 的 Chrome 是 154。要真正在日常 Chrome 裡操作只剩「做成 Chrome 擴充功能」，屬於重新設計，未做。
-- attach **不支援 headless**，手機 / 遠端情境一律用 chromium。
-- 連不上時 `_make_browser_and_page` 丟 RuntimeError（含 `_attach_launch_hint()` 的 OS 對應指令），`run_enable_session` 把整個 plan 記 FAIL 後返回。
-- 驗證方式：用 scratchpad 的暫存 `--user-data-dir` 開測試 Chrome（port 9223，避開預設 9222），確認開新分頁、`expect_page` 抓得到 Addendum 新分頁、收尾後原分頁與 Chrome 都保留。測試前先 `lsof -iTCP:9222` 確認沒有連到 Kevin 正在用的瀏覽器。
-| 新模型 Enable 一直 disabled | 多半是 Addendum 沒接受成功——non-headless 觀察 `_handle_safety_addendum` 卡在哪步 |
-
-Debug 時先 non-headless + `BROWSER_SLOW_MO=1500` 慢速觀察。
+曾加入 `BROWSER_MODE=attach`（CDP 接管 Chrome），Kevin 試用後要求移除：「多此一舉還沒有幫助」。原因是 Chrome 136+ 禁止對預設設定檔開 remote debugging，Chrome 150+ 連 `chrome://inspect/#remote-debugging` 對預設設定檔也接不上，所以 attach 只能接「另外啟動的獨立 Chrome」，無法在使用者日常的 Chrome 上操作，跟預設 Chromium 差別不大。**不要再提議 CDP / attach 類方案**；若真要在日常 Chrome 操作，只剩做成 Chrome 擴充功能，屬重新設計。
 
 ### 配額提交細節
 

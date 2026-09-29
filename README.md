@@ -52,7 +52,6 @@ Anthropic Claude 屬於 Partner Model，其 EULA 與 Advanced AI Safety Addendum
 - **前置同意流程**：部分新模型在啟用前需先接受 Advanced AI Safety Addendum；工具會自動偵測並完成（開啟條款連結 → 勾選 → Accept Terms → 解鎖 Enable），無此關卡的模型則自動略過偵測。
 - **穩健填表**：企業資訊表單以鍵盤 Tab 循序填寫，降低對頁面 DOM 結構變動的敏感度；條款 checkbox 以多重策略重試確保勾選生效。
 - **登入狀態持久化**：首次登入後保存於 `.browser_state/`，後續免重複登入；批次作業整段共用同一個瀏覽器 session。
-- **兩種瀏覽器模式**：預設由工具啟動內建 Chromium；亦可以 attach 模式透過 CDP 接管另外啟動的**獨立 Chrome 視窗**（非日常使用的 Chrome），工具僅在其中開新分頁操作，結束時只關閉工具開啟的分頁（含流程中由其彈出的分頁），使用者原有的分頁不受影響（見「瀏覽器模式」）。
 - **送出失敗自動重試**：開通 partner model 在 Console 背後是一筆 Marketplace 訂單。連續開通多個模型時，Marketplace 可能回應「An error occurred while submitting the request」。工具偵測到此提示會以逐次拉長的間隔（預設 30 / 60 / 120 秒，`SUBMIT_RETRY_WAITS` 可調）重新送出；每次重試前先以 `:countTokens` 確認模型是否已在等待期間生效，已生效即停止重送，避免重複下單。
 - **可稽核性**：操作異常時自動截圖至 `debug_screenshots/`，便於事後診斷。
 
@@ -340,8 +339,7 @@ python main.py
 | 參數 | 必填 | 說明 |
 |------|------|------|
 | `--models`  | ✓ | 模型 URL slug（支援多個，逗號分隔） |
-| `--headless` |   | 以 headless 模式跑瀏覽器（預設讀 `BROWSER_HEADLESS` 環境變數；attach 模式不適用） |
-| `--browser` |   | 瀏覽器模式 `chromium` / `attach`（預設讀 `BROWSER_MODE`，見「瀏覽器模式」） |
+| `--headless` |   | 以 headless 模式跑瀏覽器（預設讀 `BROWSER_HEADLESS` 環境變數） |
 | `-y`, `--yes` |   | 跳過確認提示 |
 
 **批次行為：**
@@ -450,46 +448,6 @@ claude-sonnet-4-6       ✅      ✅      ✅
 
 **首次使用需先以互動模式登入 Google**（建立 `.browser_state/`），之後 headless 模式才能運作。
 
-### 瀏覽器模式（chromium / attach）
-
-EULA 開通所用的瀏覽器有兩種模式，以 `.env` 的 `BROWSER_MODE` 設定預設值，`enable` 子指令可用 `--browser` 臨時覆蓋；互動模式依 `.env` 設定。
-
-| 模式 | 運作方式 | 登入狀態 | 適合情境 |
-|------|---------|---------|---------|
-| **chromium**（預設） | 工具自行啟動 Playwright 內建 Chromium，整批作業共用一個視窗，結束後關閉 | 存於 `.browser_state/` 快照 | 一般使用、headless 遠端執行 |
-| **attach** | 透過 CDP 接管以指定指令另外啟動的**獨立 Chrome**（與日常使用的 Chrome 是不同視窗、不同設定檔），在其中**另開新分頁**操作，結束時只關閉工具開啟的分頁（含其彈出的分頁） | 由該 Chrome 設定檔自行保存 | 想在自己開的視窗中觀看流程、隨時手動介入 |
-
-**使用 attach 模式：**
-
-1. 以 remote debugging 啟動 Chrome（**必須搭配獨立的 `--user-data-dir`**）：
-
-   ```bash
-   # macOS
-   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-     --remote-debugging-port=9222 --user-data-dir="$HOME/.gcp-claude-manager-chrome"
-   ```
-
-   ```powershell
-   # Windows（PowerShell）
-   & "C:\Program Files\Google\Chrome\Application\chrome.exe" `
-     --remote-debugging-port=9222 --user-data-dir="$env:USERPROFILE\.gcp-claude-manager-chrome"
-   ```
-
-2. 在這個 Chrome 視窗登入 Google 帳號（只需一次，之後該設定檔會保留登入）。
-3. 執行開通：
-
-   ```bash
-   .venv/bin/python main.py enable --project <PROJECT_ID> --models claude-opus-5-5 --browser attach
-   ```
-
-**注意事項：**
-
-- **為何需要獨立設定檔**：Chrome 136 起不允許對預設設定檔開啟 remote debugging（[Chrome 官方說明](https://developer.chrome.com/blog/remote-debugging-port)），因此無法直接接管日常使用的 Chrome，也不會帶入日常設定檔的其他帳號與擴充功能。
-- **安全性**：remote debugging 開啟期間，本機任何程式都能透過該 port 操控這個 Chrome 及其已登入的帳號。作業完成後建議關閉此 Chrome 視窗。
-- **不支援 headless**：attach 模式使用你開啟的視窗，`--headless` 會被忽略。
-- **Marketplace 送出失敗與模式無關**：兩種模式都可能遇到「An error occurred while submitting the request」，由工具的自動重試處理（見常見問題）。
-- 連線位址可用 `.env` 的 `BROWSER_CDP_URL` 調整（預設 `http://127.0.0.1:9222`）；連不上時工具會印出對應作業系統的啟動指令。
-
 ---
 
 ## Claude Code 整合
@@ -594,10 +552,7 @@ EULA 表單欄位設定。`config.json.example` 已提供範本，複製後修�
 | `CONFIG_PATH` | `config.json` | 設定檔路徑 |
 | `BROWSER_HEADLESS` | `false` | `true` = 無頭模式（不顯示瀏覽器視窗） |
 | `BROWSER_SLOW_MO` | `500` | 自動化操作間隔（毫秒），方便觀察流程 |
-| `BROWSER_STATE_DIR` | `.browser_state` | 瀏覽器登入狀態儲存目錄（chromium 模式） |
-| `BROWSER_MODE` | `chromium` | 瀏覽器模式：`chromium` / `attach`（見「瀏覽器模式」） |
-| `BROWSER_CDP_URL` | `http://127.0.0.1:9222` | attach 模式連線的 Chrome remote debugging 位址 |
-| `SUBMIT_RETRY_WAITS` | `30,60,120` | Marketplace 送出失敗時每次重試前的等待秒數 |
+| `BROWSER_STATE_DIR` | `.browser_state` | 瀏覽器登入狀態儲存目錄 |
 | `DEFAULT_REGION` | `us-east5` | 預設區域（可在選單中覆蓋） |
 
 ### `customers.json`（選填，搭配 Claude Code Skill）
