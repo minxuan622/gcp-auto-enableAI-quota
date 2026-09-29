@@ -50,7 +50,7 @@ Anthropic Claude 屬於 Partner Model，其 EULA 與 Advanced AI Safety Addendum
 - **鎖定介面語言**：導航時附加 `hl=en`，使按鈕、表單欄位與條款文字固定為英文，讓後續的元素定位與欄位對照有一致、可預期的基準（Console 會依帳號語言在地化，同一顆按鈕在不同語言下文字不同）。
 - **精準元素定位**：以完全文字比對（`:text-is`）定位操作元件，避免與頁面上文字相近的狀態標籤混淆。
 - **前置同意流程**：部分新模型在啟用前需先接受 Advanced AI Safety Addendum；工具會自動偵測並完成（開啟條款連結 → 勾選 → Accept Terms → 解鎖 Enable），無此關卡的模型則自動略過偵測。
-- **穩健填表**：企業資訊表單以鍵盤 Tab 循序填寫，降低對頁面 DOM 結構變動的敏感度；條款 checkbox 以多重策略重試確保勾選生效。
+- **穩健填表**：企業資訊表單以鍵盤 Tab 循序填寫，降低對頁面 DOM 結構變動的敏感度；條款 checkbox 直接操作原生 `<input>` 勾選，並以其實際勾選狀態驗證，避免點到條款文字中的連結。
 - **登入狀態持久化**：首次登入後保存於 `.browser_state/`，後續免重複登入；批次作業整段共用同一個瀏覽器 session。
 - **送出失敗自動重試**：開通 partner model 在 Console 背後是一筆 Marketplace 訂單。連續開通多個模型時，Marketplace 可能回應「An error occurred while submitting the request」。工具偵測到此提示會以逐次拉長的間隔（預設 30 / 60 / 120 秒，`SUBMIT_RETRY_WAITS` 可調）重新送出；每次重試前先以 `:countTokens` 確認模型是否已在等待期間生效，已生效即停止重送，避免重複下單。
 - **可稽核性**：操作異常時自動截圖至 `debug_screenshots/`，便於事後診斷。

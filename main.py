@@ -943,23 +943,17 @@ def _fill_form_sequential(page, form: dict, display_name: str, enabled_check=Non
     console.print(f"  等待 Agreements 頁面載入...")
     page.wait_for_timeout(5000)
 
-    # GCP 使用 Angular Material <mat-checkbox>，內部 <input> 是隱藏的，
-    # 必須點擊外層元件才有效。此處用重試迴圈確保勾選成功。
+    # 條款 checkbox 只操作原生 input（見 _terms_checkbox_input）。
+    # 若 Agree 後仍跳出「Terms not accepted」彈窗，重新勾選再送出，最多 3 次。
     MAX_AGREE_ATTEMPTS = 3
 
     for attempt in range(1, MAX_AGREE_ATTEMPTS + 1):
-        console.print(f"  嘗試勾選 Terms checkbox（第 {attempt} 次）...")
-
         # ── 勾選 checkbox ──
-        _try_check_terms(page)
-        page.wait_for_timeout(800)
-
-        # ── 驗證 checkbox 狀態 ──
-        if not _is_checkbox_checked(page):
-            console.print(f"  [yellow]checkbox 似乎未勾選，再嘗試一次...[/]")
-            # 滾動 + 強制點擊
-            _force_click_all_checkboxes(page)
-            page.wait_for_timeout(800)
+        if _try_check_terms(page):
+            console.print("  [green]✓[/] 已勾選條款 checkbox")
+        else:
+            console.print(f"  [yellow]⚠ 條款 checkbox 未能確認勾選（第 {attempt} 次），仍嘗試送出[/]")
+        page.wait_for_timeout(500)
 
         # ── 點擊 Agree ──
         try:
@@ -1096,83 +1090,57 @@ def _handle_safety_addendum(page, context, accept_btn) -> tuple[bool, str]:
     return True, "已接受 Addendum"
 
 
-def _try_check_terms(page):
-    """嘗試多種策略勾選 Terms checkbox。"""
-    # 策略 1: 找包含條款相關文字的 mat-checkbox
-    for keyword in ["acknowledge", "agree", "By purchasing", "Terms"]:
+def _terms_checkbox_input(page):
+    """
+    Agreements 頁條款 checkbox 的原生 <input type="checkbox">。
+
+    外層 <mat-checkbox> 是包含整段條款文字與兩個條款連結（Marketplace ToS、
+    Anthropic ToS）的大區塊；點它的中心常會點到文字中的連結而開出新分頁、且不會勾選。
+    因此一律操作裡面 28×28 的原生 input（Angular MDC 的 input 為可見、可直接勾選）。
+    """
+    for kw in ["acknowledge", "By purchasing", "agree", "Terms"]:
+        loc = page.locator(f'mat-checkbox:has-text("{kw}") input[type="checkbox"]').first
         try:
-            el = page.locator(f'mat-checkbox:has-text("{keyword}")').first
-            if el.is_visible(timeout=1500):
-                el.scroll_into_view_if_needed()
-                page.wait_for_timeout(300)
-                el.click()
-                page.wait_for_timeout(500)
-                console.print(f"  [green]✓[/] 已點擊 checkbox（關鍵字: {keyword}）")
-                return
+            if loc.count():
+                return loc
         except Exception:
             continue
-
-    # 策略 2: 找包含條款文字的 label
-    for keyword in ["acknowledge", "By purchasing"]:
-        try:
-            el = page.locator(f'label:has-text("{keyword}")').first
-            if el.is_visible(timeout=1500):
-                el.click()
-                page.wait_for_timeout(500)
-                console.print(f"  [green]✓[/] 已點擊 label（關鍵字: {keyword}）")
-                return
-        except Exception:
-            continue
-
-    # 策略 3: 通用 checkbox role / class
+    loc = page.locator('input.mdc-checkbox__native-control, input[type="checkbox"]').first
     try:
-        cb = page.locator('[role="checkbox"], .mat-checkbox, mat-checkbox').first
-        if cb.is_visible(timeout=1500):
-            cb.click()
-            page.wait_for_timeout(500)
-            console.print(f"  [green]✓[/] 已點擊通用 checkbox")
-            return
+        return loc if loc.count() else None
     except Exception:
-        pass
+        return None
 
-    console.print(f"  [yellow]⚠ 無法定位 checkbox[/]")
+
+def _try_check_terms(page) -> bool:
+    """勾選條款 checkbox（只操作原生 input），回傳是否已勾選。"""
+    cb = _terms_checkbox_input(page)
+    if cb is None:
+        console.print("  [yellow]⚠ 無法定位條款 checkbox[/]")
+        return False
+    try:
+        cb.scroll_into_view_if_needed(timeout=3000)
+        if not cb.is_checked():
+            cb.check(timeout=5000)
+    except Exception:
+        # check() 失敗（例如被固定工具列遮住）時，直接對 input 元素派送 click 事件。
+        # 不可用 click(force=True)：那是「在座標上點」，會點到蓋在上面的元素（可能是連結）。
+        try:
+            if not cb.is_checked():
+                cb.dispatch_event("click")
+        except Exception:
+            pass
+    page.wait_for_timeout(300)
+    return _is_checkbox_checked(page)
 
 
 def _is_checkbox_checked(page) -> bool:
-    """檢查頁面上的 Terms checkbox 是否已呈現勾選狀態。"""
+    """讀取條款 checkbox 原生 input 的勾選狀態。"""
+    cb = _terms_checkbox_input(page)
     try:
-        cb = page.locator(
-            'mat-checkbox, [role="checkbox"]'
-        ).first
-        if not cb.is_visible(timeout=1000):
-            return False
-        aria = cb.get_attribute("aria-checked") or ""
-        classes = cb.get_attribute("class") or ""
-        return aria == "true" or "mat-checkbox-checked" in classes or "checked" in classes
+        return bool(cb is not None and cb.is_checked())
     except Exception:
         return False
-
-
-def _force_click_all_checkboxes(page):
-    """暴力找所有 checkbox 元素，逐一嘗試點擊。"""
-    try:
-        page.locator('text="Terms and agreements"').first.scroll_into_view_if_needed()
-        page.wait_for_timeout(500)
-    except Exception:
-        pass
-
-    all_cb = page.locator(
-        'mat-checkbox, [role="checkbox"], '
-        'input[type="checkbox"], .mat-checkbox-inner-container'
-    ).all()
-    for cb in all_cb:
-        try:
-            if cb.is_visible():
-                cb.click()
-                page.wait_for_timeout(300)
-        except Exception:
-            continue
-    console.print(f"  [dim]已強制點擊 {len(all_cb)} 個 checkbox 元素[/]")
 
 
 def _tab_select_dropdown(page, value: str, label: str):

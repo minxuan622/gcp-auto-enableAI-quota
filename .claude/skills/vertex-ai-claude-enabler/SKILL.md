@@ -449,7 +449,7 @@ aiplatform.googleapis.com/online_prediction_input_tokens_per_minute_per_base_mod
 | Enable 按鈕找不到 | `page.screenshot()` 看實際頁面；確認 `hl=en` 生效（中文介面按鈕是「啟用」）；用 `:text("Enable")` dump 所有含字元素看真正 tag（可能是 `<span>`） |
 | 表單欄位順序變動 | Tab 循序會錯亂——重新確認順序調 `_fill_form_sequential` |
 | 下拉選單不展開 | 調 `_tab_select_dropdown` 的 key 序列（ArrowDown/Enter） |
-| Terms checkbox 點不到 | 檢查 `_is_checkbox_checked` 的 `aria-checked` 讀法 |
+| Terms checkbox 點不到 / 勾選時跳出條款分頁 | 見下方「Agreements 條款 checkbox」；確認 `_terms_checkbox_input` 仍抓得到 `mat-checkbox … input[type=checkbox]` |
 | Accept Terms 點了沒反應 | 確認連結有先點開（checkbox 才解鎖）；檢查 `_handle_safety_addendum` 的 `context.expect_page` 有無捕捉到新分頁 |
 | 連續開通時跳「An error occurred while submitting the request」 | Marketplace 拒絕訂單，見下方「Marketplace 送出失敗」；已由 `_retry_on_submit_error` 自動等待重試 |
 | 新模型 Enable 一直 disabled | 多半是 Addendum 沒接受成功——non-headless 觀察 `_handle_safety_addendum` 卡在哪步 |
@@ -463,6 +463,14 @@ Debug 時先 non-headless + `BROWSER_SLOW_MO=1500` 慢速觀察。
 - **成因未完全確認**。查到 Cloud Commerce Consumer Procurement API 有 `WriteRequestsPerMinutePerProjectPerUser = 10`，但工具約 1 模型 / 分鐘、手動更慢，單靠這個配額解釋不了。另一個可能是前一筆訂單仍在處理中就送下一筆被拒。**不要跟 Kevin 講得像已確定。**
 - 目標專案上該 API 是 DISABLED 但開通照樣成功 → Console 下單不扣目標專案的配額，限制可能跟著使用者走、跨專案累計。
 - 實作：Next 與 Agree 兩個送出點之後都呼叫 `_retry_on_submit_error()`：偵測提示 → 關閉 → 等 `SUBMIT_RETRY_WAITS`（預設 30/60/120 秒）→ 先 `is_model_enabled` 確認是否已生效（避免重複下單）→ 重按同一顆按鈕。以本機模擬頁驗證過四種情境（無錯 / 重試成功 / 用盡 / 等待中已生效），**尚未在真實觸發的情況下驗證**。
+
+**Agreements 條款 checkbox（2026-09 修正）**
+
+- 實際 DOM（跑到 Agreements 頁停下 dump 得知）：外層 `<mat-checkbox>` 是 1152×124 的大區塊，包含整段條款文字與兩個連結（Google Cloud Marketplace ToS、Anthropic ToS）；真正的勾選框是裡面 28×28、**可見**的 `<input type="checkbox" class="mdc-checkbox__native-control">`。
+- 舊邏輯點外層 mat-checkbox 的中心 → 點到條款連結開新分頁、沒勾到 → 判定「似乎未勾選」→ 強制點擊全部元素（又點一次外層 → 第二個條款分頁，再點到 input 才勾起來）。這就是每次都出現「checkbox 似乎未勾選」與兩個 `terms/marketplace/launcher` 分頁的原因。
+- 新邏輯：`_terms_checkbox_input()` 取原生 input → `check()`；失敗時用 `dispatch_event("click")` 對 input 本身派送事件。**不可用 `click(force=True)`**，那是座標點擊，會點到蓋在上面的元素（離線測試時就被頂端工具列蓋住過）。勾選狀態用 `is_checked()` 讀原生值，不猜 CSS class。
+- 驗證：離線（以真實頁 HTML、關 JS）確認抓對元素、0 個誤開分頁、重複呼叫不會取消勾選；實跑 kevin-480608 / Sonnet 5.5 一次勾選成功、無重試訊息、404→400。
+- Addendum 前置關卡的 checkbox（`_handle_safety_addendum`）是另一段邏輯，仍點 `mat-checkbox:has-text("By checking this box")`；Fable 5 實測可用，未改。
 
 **已試過並移除：attach 瀏覽器模式（2026-09）**
 
