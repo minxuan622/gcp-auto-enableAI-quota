@@ -67,6 +67,12 @@ CLAUDE_MODELS = [
     ("Claude 4.5 Haiku",  "anthropic-claude-haiku-4-5",  "claude-haiku-4-5"),
 ]
 
+# 不開放提升配額的 base_model → 略過原因
+# Fable 家族即使已開通，Cloud Quotas 也沒有配額值；實測申請 Global QPM 10 仍被拒（granted 0）。
+QUOTA_LOCKED_BASE_MODELS = {
+    "anthropic-claude-fable": "Fable 家族不開放提升配額",
+}
+
 # Routing 策略分類關鍵字（比對 Cloud Quotas metric 名稱前綴）
 # 實際 metric 樣式：
 #   Global:            aiplatform.googleapis.com/global_online_prediction_*
@@ -346,7 +352,7 @@ def _warn_no_billing(project_id: str):
 
 
 def _check_all_quotas_na(route_quotas: dict) -> bool:
-    """檢查是否所有配額的 limit 都是 N/A（代表模型尚未開通）。"""
+    """檢查是否所有配額的 limit 都是 N/A（通常代表模型尚未開通，也可能是此模型不開放配額）。"""
     for qtype in ["rpm", "input_tpm", "output_tpm"]:
         q = route_quotas.get(qtype, {})
         limit = q.get("limit", "N/A")
@@ -1629,7 +1635,10 @@ def quota_flow(projects: list[dict]):
 
         # ── Step 2: 選模型 + 查第一個可用專案的配額作為 UI 參考 ──
         if step == 2:
-            choices = [{"name": m[0], "value": m} for m in CLAUDE_MODELS]
+            choices = [
+                {"name": f"{m[0]}（不開放提配額）" if m[1] in QUOTA_LOCKED_BASE_MODELS else m[0], "value": m}
+                for m in CLAUDE_MODELS
+            ]
             choices.append({"name": "↩ 返回上一步（重新選擇專案）", "value": BACK_SENTINEL})
             model = inquirer.select(
                 message="請選擇模型：",
@@ -1639,6 +1648,9 @@ def quota_flow(projects: list[dict]):
                 step = 1
                 continue
             display_name, base_model, _garden_slug = model
+            if base_model in QUOTA_LOCKED_BASE_MODELS:
+                console.print(f"[yellow]⊘ {display_name}：{QUOTA_LOCKED_BASE_MODELS[base_model]}，請改選其他模型。[/]")
+                continue
 
             console.print(f"\n[bold]查詢第一個可用專案的 {display_name} 配額作為參考值...[/]")
             grouped = {}
@@ -2172,10 +2184,10 @@ def _quota_one_project(
 
     route_quotas = grouped[routing]
     if _check_all_quotas_na(route_quotas):
-        console.print(f"  [yellow]⊘ 模型尚未開通 EULA，所有配額略過[/]")
+        console.print(f"  [yellow]⊘ 所有配額皆無數值（可能尚未開通 EULA，或此模型不開放提配額），略過[/]")
         for qtype, t in targets.items():
             if t is not None:
-                results.append(OpResult(project_id, _label(qtype, t), "SKIP", "模型尚未開通 EULA"))
+                results.append(OpResult(project_id, _label(qtype, t), "SKIP", "配額無數值（未開通 EULA？）"))
         return results
 
     # 逐一比對目標值並送出
@@ -2239,6 +2251,16 @@ def run_batch_quota(
     先顯示計畫（專案清單 + 目標值）→ 確認 → 執行。
     """
     display_name, base_model, _slug = model
+
+    locked_reason = QUOTA_LOCKED_BASE_MODELS.get(base_model)
+    if locked_reason:
+        console.print(f"\n[yellow]⊘ {display_name}：{locked_reason}，不送出申請。[/]")
+        return [
+            OpResult(pid, f"{QTYPE_LABELS.get(qtype, qtype)} → {_fmt_limit(t)}", "SKIP", locked_reason)
+            for pid in project_ids
+            for qtype, t in targets.items()
+            if t is not None
+        ]
 
     # 計畫摘要
     console.print(f"\n[bold]即將對 {len(project_ids)} 個專案提升 {display_name} / {routing} 配額：[/]")

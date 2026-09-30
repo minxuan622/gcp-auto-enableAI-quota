@@ -90,14 +90,14 @@ Edit `main.py`，在 `CLAUDE_MODELS` 最頂端加一列（新的在前）：
 
 複誦要做的事給 Kevin 確認：
 
-> 我要在 `kevin-480608` 開通 **Claude 4.7 Opus**，確定嗎？
+> 我要在 `<PROJECT_ID>` 開通 **Claude 4.7 Opus**，確定嗎？
 
 等 Kevin 回 yes / 確定 / 對 / 嗯。
 
 #### Step 4：執行 enable 子指令
 
 ```bash
-.venv/bin/python main.py enable --project kevin-480608 --models claude-opus-4-7 --yes
+.venv/bin/python main.py enable --project <PROJECT_ID> --models claude-opus-4-7 --yes
 ```
 
 - 預設顯示瀏覽器，Kevin 能看 Playwright 操作進度
@@ -106,7 +106,7 @@ Edit `main.py`，在 `CLAUDE_MODELS` 最頂端加一列（新的在前）：
 #### Step 5：提升配額（如 Kevin 有要求）
 
 ```bash
-.venv/bin/python main.py quota --project kevin-480608 \
+.venv/bin/python main.py quota --project <PROJECT_ID> \
                      --model claude-opus-4-7 \
                      --routing global \
                      --rpm 100 --input-tpm 500000 --output-tpm 100000 \
@@ -287,6 +287,9 @@ Tuple 三元素，**順序不可顛倒**：
 **⚠ 家族共用配額**（GCP 官方文件載明）：Opus 4.8 之後的所有 Opus 版本扣同一個 `anthropic-claude-opus` 配額池，Sonnet / Fable 同理；新版本上線自動沿用家族配額，Cloud Quotas 裡**不會**出現帶版本號的 dimension。base_model 寫錯時配額查詢回 0 筆，配額功能會**靜默失效**（開通不受影響，因為開通用 slug）。
 
 **影響**：多個模型可以指向同一個 base_model；`run_batch_quota` 會自動顯示「此配額為家族共用池，同時適用於…」提示，避免 Kevin 誤以為只改到單一版本。
+
+**⚠ Fable 家族不開放提升配額**：已開通的專案上，`anthropic-claude-fable` 的配額也全部沒有數值；實測申請 Global QPM 10 仍被拒（granted 0）。程式用 `QUOTA_LOCKED_BASE_MODELS` 標記，`run_batch_quota` 直接回 SKIP、互動選單不讓選。Kevin 要求提 Fable 配額時，直接說明不開放，不要送申請。新增的 base_model 若也確認不開放，加進這個 dict。
+
 ### 新增模型完整步驟
 
 1. **publisher API 確認上架 + 取得 slug**（見 Part A Step 1 的 curl）

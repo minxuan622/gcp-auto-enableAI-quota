@@ -75,9 +75,9 @@ Anthropic Claude 屬於 Partner Model，其 EULA 與 Advanced AI Safety Addendum
 |------|----------|-----------------|--------|
 | Claude Opus 5.5   | `claude-opus-5-5`   | `anthropic-claude-opus`       | Opus 家族共用 |
 | Claude Sonnet 5.5 | `claude-sonnet-5-5` | `anthropic-claude-sonnet`     | Sonnet 家族共用 |
-| Claude Fable 5.1  | `claude-fable-5-1`  | `anthropic-claude-fable`      | Fable 家族共用 |
+| Claude Fable 5.1  | `claude-fable-5-1`  | `anthropic-claude-fable`      | Fable 家族共用（不開放提升） |
 | Claude Opus 5     | `claude-opus-5`     | `anthropic-claude-opus`       | Opus 家族共用 |
-| Claude Fable 5    | `claude-fable-5`    | `anthropic-claude-fable`      | Fable 家族共用 |
+| Claude Fable 5    | `claude-fable-5`    | `anthropic-claude-fable`      | Fable 家族共用（不開放提升） |
 | Claude Sonnet 5   | `claude-sonnet-5`   | `anthropic-claude-sonnet`     | Sonnet 家族共用 |
 | Claude 4.8 Opus   | `claude-opus-4-8`   | `anthropic-claude-opus`       | Opus 家族共用 |
 | Claude 4.7 Opus   | `claude-opus-4-7`   | `anthropic-claude-opus-4-7`   | 版本獨立 |
@@ -89,6 +89,8 @@ Anthropic Claude 屬於 Partner Model，其 EULA 與 Advanced AI Safety Addendum
 > URL slug 用於 CLI 子指令的 `--models` / `--model` 參數。清單定義於 `main.py` 的 `CLAUDE_MODELS`；新模型發布時在此新增一列即可（`list-models` 與互動選單會自動同步）。
 >
 > **配額池分兩代**：Claude 4.7 以前每個版本各有獨立配額；**4.8 之後同家族共用一個配額池**（GCP 的設計，新版本上線自動沿用家族既有配額）。因此對 Opus 5.5 提升配額，Opus 4.8 / 5 也會一併受益；工具在提升家族共用配額時會顯示提示。
+>
+> **Fable 家族不開放提升配額**：即使已開通，Cloud Quotas 也查不到 Fable 的配額值，提升申請會被拒絕。工具對 Fable 會直接略過配額提升並說明原因，不會送出申請；開通不受影響。
 
 ### 支援 Routing 策略
 
