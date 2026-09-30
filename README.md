@@ -39,6 +39,7 @@
 | **Billing 檢查** | 確認專案已綁定帳單帳戶 | Cloud Billing REST API，未綁定時中止並提示 |
 | **偵測開通狀態** | 判斷模型是否已接受 EULA | 對 publisher model 發 `:countTokens` 探測：`404` = 未開通、`400` = 已開通。此訊號直接反映 Partner Model 的真實可存取狀態，較「以配額預設值推測」更可靠 |
 | **EULA 開通** | 接受模型條款並啟用 | Playwright 驅動瀏覽器重現 Console 流程（見下節） |
+| **資料分享（Fable）** | 開啟 prompt-response 分享給 Anthropic | `fetchPublisherModelConfig` / `setPublisherModelConfig`（`dataSharingEnabledProvider`），逐一處理 global / us / eu |
 | **配額查詢 / 提升** | 讀取與調整 RPM / TPM | Cloud Quotas SDK；查詢走 REST（回應結構直觀）、送出走 SDK（型別安全、錯誤處理完整） |
 | **Routing 分類** | 區分 Global / US / EU / Regional | 依 quota metric 名稱前綴分類（`global_*` / `us_multi_region_*` …），Global 無溢價 |
 | **結果回報** | 逐項狀態與批次總表 | 統一的 `OpResult` 結果模型 + Rich 表格輸出；失敗清單寫入 `failed-projects.txt` 供重跑 |
@@ -65,6 +66,7 @@ Anthropic Claude 屬於 Partner Model，其 EULA 與 Advanced AI Safety Addendum
 | **配額提升** | 查詢 RPM / Input TPM / Output TPM 配額現況，分別設定目標值並透過 Cloud Quotas API 送出提升申請 |
 | **批次多專案**| 單次執行處理多個 GCP 專案：互動模式 checkbox 多選、CLI 支援 `--projects` / `--projects-file`；已開通 / 已達目標自動跳過 |
 | **模型狀態 Matrix**| `list-models` 子指令可產出「專案 × 模型」開通狀態矩陣，一眼看出各環境哪些模型已啟用 |
+| **Fable 資料分享** | Fable 開通後自動檢查 global / us / eu 的資料分享，缺的列出來確認後開啟；`data-sharing` 子指令可單獨查詢或補開 |
 | **Billing 檢查** | 操作前自動確認專案是否已綁定帳單帳戶，未綁定時給予明確提示與連結 |
 | **瀏覽器狀態管理** | 自動儲存 / 載入 Google 登入狀態，首次登入後免重複驗證；批次模式整段共用一個 session |
 | **返回上一步** | 所有互動式選單皆支援「返回上一步」，選錯不必從頭來過 |
@@ -245,6 +247,7 @@ python main.py
 ? 請選擇操作：
 > 🚀 環境開通（啟用 API + EULA 自動填表）
   📊 配額管理（查詢與提升配額）
+  🔗 Fable 資料分享（查詢與開啟）
   🗑️  清除瀏覽器登入狀態
   ❌ 離開
 ```
@@ -259,6 +262,7 @@ python main.py
 → 逐一導航 Model Garden：
      （部分新模型）接受 Advanced AI Safety Addendum → 點擊 Enable
      → 填寫 EULA → Next → 勾選 Terms → Agree
+→（Fable）檢查 global / us / eu 資料分享，缺的列出並確認後開啟
 → 最後顯示批次結果 table（Project / Model / Status / Note）
 ```
 
@@ -268,6 +272,7 @@ python main.py
 - **部分新模型有前置同意關卡**：頁面出現「Advanced AI Safety Addendum」時，工具會自動點開連結、勾選、Accept Terms，待 Enable 解鎖後再繼續（舊模型無此關卡，自動跳過偵測）
 - **已開通的模型自動跳過**：對 publisher model 的 `:countTokens` endpoint 探測，404 = 未開通、400 = 已開通（Partner Model 真實 EULA 接受狀態）
 - 批次執行若有失敗，自動寫 `failed-projects.txt`，可直接 `--projects-file failed-projects.txt` 重跑
+- **Fable 需要另外開資料分享**：Fable 屬於 Advanced AI Safety Addendum 範圍，每個 location 都要開啟 prompt-response 分享給 Anthropic，沒開的 location 呼叫會回 403。Model Garden 的開通流程不會自動開，所以工具在開通後會補做（詳見 [`data-sharing`](#data-sharing--查詢--開啟-fable-資料分享)）
 
 ### 配額提升（支援多專案 checkbox 多選）
 
@@ -291,7 +296,7 @@ python main.py
 
 **安全機制：**
 
-- 若配額全部顯示 N/A，代表模型尚未開通，工具會提示先執行「環境開通」
+- 若配額全部顯示 N/A，通常代表模型尚未開通（也可能是此模型不開放提配額），工具會略過並提示
 - 若專案未綁定 Billing，會顯示紅色警告面板與 Console 連結
 - 每次輸入前顯示 5 倍安全閾值，超過會以黃/紅色警示
 
@@ -437,6 +442,34 @@ claude-sonnet-4-6       ✅      ✅      ✅
 
 **專案參數與 `enable` / `quota` 一致**：`--project` / `--projects` / `--projects-file` 三擇一，皆可省略（省略則只列模型清單，不查狀態）。
 
+### `data-sharing` — 查詢 / 開啟 Fable 資料分享
+
+Fable 在每個 location（global / us / eu）都要開啟 prompt-response 分享給 Anthropic（`dataSharingEnabledProvider`）才能呼叫，沒開的 location 會回 `403 Access to this model requires data sharing to be enabled`。這是 Advanced AI Safety Addendum 與 Anthropic 條款 Section F 的要求；開啟後，該 location 的 prompt 與回應會即時分享給 Anthropic。
+
+`enable` 開通 Fable 後會自動檢查並補開；已經開通的專案可以用這個子指令補做：
+
+```bash
+# 只查詢（預設不改任何設定）
+.venv/bin/python main.py data-sharing --project my-project-id
+
+# 補開尚未開啟的 location（會先列出計畫並確認）
+.venv/bin/python main.py data-sharing --projects proj-a,proj-b --fix
+
+# 只處理特定模型 + 跳過確認
+.venv/bin/python main.py data-sharing --projects-file projects.txt \
+                     --models claude-fable-5 --fix --yes
+```
+
+| 參數 | 必填 | 說明 |
+|------|------|------|
+| `--models` |   | 模型 URL slug，逗號分隔（預設：所有需要資料分享的模型；不需要的模型會略過） |
+| `--fix` |   | 開啟尚未開啟的 location（不加則只查詢） |
+| `-y`, `--yes` |   | 跳過確認提示 |
+
+- 只處理已開通 EULA 的模型；未開通的顯示 `⏭ SKIP (模型未開通)`
+- 設定以「模型 × location」為單位：Fable 5 開了，Fable 5.1 仍要另外開
+- Opus / Sonnet 不需要資料分享
+
 ### 互動 vs 非互動
 
 | 情境 | 建議模式 |
@@ -445,6 +478,7 @@ claude-sonnet-4-6       ✅      ✅      ✅
 | 已知要開哪個專案 / 模型 | 非互動 `enable` |
 | 已知目標配額數值 | 非互動 `quota` |
 | 想一覽多專案開通狀態 | 非互動 `list-models --projects-file ...` |
+| 已開通的 Fable 補開資料分享 | 非互動 `data-sharing --projects-file ... --fix` |
 | 一次批次處理多專案 | `--projects` 或 `--projects-file` |
 | 遠端 / 腳本 / AI agent | 非互動 + `--headless --yes` |
 

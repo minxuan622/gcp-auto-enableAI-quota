@@ -1,6 +1,6 @@
 ---
 name: vertex-ai-claude-enabler
-description: 在 GCP Vertex AI（Agent Platform）上開通 Anthropic Claude 模型（Model Garden EULA 同意）與提升 RPM / TPM 配額，並維護 gcp-claude-manager 工具本身。以下情境必須觸發：要在一個或多個 GCP 專案開通 Claude 模型或提升配額；以客戶名稱為單位批次處理（名稱與別名對應 customers.json 裡的專案）；新 Claude 模型發布後要加進工具或確認 Vertex AI 是否已上架；提及 Model Garden、anthropic-claude base_model、Cloud Quotas；修改本工具程式碼（CLAUDE_MODELS、Routing 分類、CLI 子指令、EULA 自動填表）。此 Skill 限於 gcp-claude-manager 專案目錄下載入。
+description: 在 GCP Vertex AI（Agent Platform）上開通 Anthropic Claude 模型（Model Garden EULA 同意）與提升 RPM / TPM 配額，並維護 gcp-claude-manager 工具本身。以下情境必須觸發：要在一個或多個 GCP 專案開通 Claude 模型或提升配額；以客戶名稱為單位批次處理（名稱與別名對應 customers.json 裡的專案）；新 Claude 模型發布後要加進工具或確認 Vertex AI 是否已上架；Fable 呼叫回 403 / 需要開資料分享（dataSharingEnabledProvider、setPublisherModelConfig）；提及 Model Garden、anthropic-claude base_model、Cloud Quotas；修改本工具程式碼（CLAUDE_MODELS、Routing 分類、CLI 子指令、EULA 自動填表）。此 Skill 限於 gcp-claude-manager 專案目錄下載入。
 ---
 
 # Vertex AI Claude Model Enabler
@@ -46,6 +46,18 @@ python main.py enable --project <PROJECT_ID> --models <slug1,slug2> --yes
 - `--routing`：`global` / `us` / `eu` / `regional`（Kevin 預設都用 `global`）
 - 三個 `--*-tpm` / `--rpm` **可以只給部分**——沒給的就不動
 - Global 是**無溢價**的 endpoint；其他都有 +10% 溢價
+
+**Fable 資料分享（查詢 / 補開）：**
+
+```bash
+.venv/bin/python main.py data-sharing --project <PROJECT_ID>                 # 只查詢
+.venv/bin/python main.py data-sharing --projects <pid1>,<pid2> --fix --yes   # 補開（chat 確認後）
+```
+
+- Fable 每個 location（global / us / eu）都要開 `dataSharingEnabledProvider`，沒開的呼叫回 **403**。Model Garden 開通**不會**自動開
+- `enable` 開通 Fable 後會自動檢查並補開（`--yes` 時不再詢問）；已開通的專案用這個子指令補
+- 開啟 = 該 location 的 prompt 與回應即時分享給 Anthropic。**會改客戶設定，一定先在 chat 確認**再帶 `--fix --yes`；只查詢不用確認
+- enableModel API 只有 Private Offer 客戶需要，一般線上條款客戶不用
 
 ### 標準執行流程
 
@@ -257,17 +269,18 @@ gcp-claude-manager/
 | 區塊 | 主要內容 |
 |------|---------|
 | Imports + .env 設定 | `argparse`, `dotenv`；`BROWSER_*`、`SUBMIT_RETRY_WAITS` |
-| 常數 | `CLAUDE_MODELS`, `ROUTING_KEYWORDS`, `ROUTING_PRICING`, `ROUTING_CLI_MAP`, `QUOTA_TYPE_KEYWORDS` |
+| 常數 | `CLAUDE_MODELS`, `QUOTA_LOCKED_BASE_MODELS`, `DATA_SHARING_BASE_MODELS` / `DATA_SHARING_LOCATIONS`, `ROUTING_KEYWORDS`, `ROUTING_PRICING`, `ROUTING_CLI_MAP`, `QUOTA_TYPE_KEYWORDS` |
 | 設定與驗證 | `load_config()`, `check_gcloud_auth()`, `get_accessible_projects()`, `select_project()`, `select_models()` |
 | Billing / N/A 警示 | `check_billing()`, `_warn_no_billing()`, `_check_all_quotas_na()` |
 | 結果與開通偵測 | `OpResult`, `is_model_enabled()`（countTokens 探測）, `print_batch_summary()` |
+| 資料分享 | `get_data_sharing()` / `set_data_sharing()`（fetch / setPublisherModelConfig）, `ensure_data_sharing()`（查詢 → 列計畫 → 確認 → 開啟） |
 | 瀏覽器狀態 / 除錯 | `_load_browser_state()`, `_save_browser_state()`, `_debug_screenshot()` |
 | API 啟用 | `_enable_single_api()`, `enable_api()` |
 | Playwright EULA | `_make_browser_and_page()`, `run_enable_session()`（`auto_fill_eula()` 是單專案包裝）, `_retry_on_submit_error()`, `_fill_form_sequential()`, `_handle_safety_addendum()`, `_terms_checkbox_input()` / `_try_check_terms()`, `_tab_select_dropdown()` |
 | 配額查詢/提交 | `get_quota_info()`, `_classify_quota()`, `submit_single_quota()` |
 | 互動配額流程 | `quota_flow()`（狀態機 Step 1–4） |
 | 批次 | `_find_model_by_slug()`, `run_batch_enable()`, `_quota_one_project()`, `run_batch_quota()` |
-| CLI 非互動 | `cmd_enable()`, `cmd_quota()`, `cmd_list_models()`, `parse_args()` |
+| CLI 非互動 | `cmd_enable()`, `cmd_quota()`, `cmd_list_models()`, `cmd_data_sharing()`, `parse_args()` |
 | 互動選單 / 入口 | `interactive_menu()`, `main()`（`if/elif` 分派） |
 
 ### `CLAUDE_MODELS` 格式
@@ -370,7 +383,10 @@ aiplatform.googleapis.com/online_prediction_input_tokens_per_minute_per_base_mod
 2. 解析 `--models`（逗號分隔）→ `_find_model_by_slug()`
 3. `run_batch_enable()`：逐專案 `check_billing()`（未綁定記 FAIL、繼續下一個）→ `enable_api()` → `is_model_enabled()`（已開通記 SKIP）
 4. 顯示實際要跑的計畫 + `inquirer.confirm()`（除非 `--yes`）；`--headless` → `globals()["BROWSER_HEADLESS"] = True`
-5. `run_enable_session()` 整批共用一個瀏覽器 session 執行 EULA → `print_batch_summary()`
+5. `run_enable_session()` 整批共用一個瀏覽器 session 執行 EULA
+6. `ensure_data_sharing()`：對通過預檢的專案 × `DATA_SHARING_BASE_MODELS` 模型，重新 `is_model_enabled()` 後查 global / us / eu，缺的列計畫 + 確認（除非 `--yes`）再開；使用者取消 EULA 計畫時不跑這步 → `print_batch_summary()`
+
+**資料分享實測依據**：沒開的 location，rawPredict 回 `403 Access to this model requires data sharing to be enabled for publisher 'anthropic'`；Opus / Sonnet 不需要。`countTokens` 探測偵測不到這件事，所以 Fable「已開通」不代表能呼叫。`set_data_sharing()` 的真實 POST 尚未在真實專案跑過（Kevin 要求測試專案先不開），只以 mock 驗證流程。
 
 #### `cmd_quota` 流程
 
@@ -552,7 +568,9 @@ Debug 時先 non-headless + `BROWSER_SLOW_MO=1500` 慢速觀察。
 
 | 症狀 | 原因 | 解法 |
 |------|------|------|
-| 配額全部 N/A | 模型尚未開通 EULA | 先跑 `enable` 子指令 |
+| 配額全部 N/A | 模型尚未開通 EULA，或此模型不開放提配額（Fable） | 先用 `list-models --project` 確認開通狀態 |
+| Fable 呼叫回 403「requires data sharing」 | 該 location 沒開資料分享 | `data-sharing --project <PROJECT_ID> --fix`（先在 chat 確認） |
+| Fable 呼叫回 429 配額用完 | 該專案 Fable 配額為 0 | 目前無法透過配額申請解決 |
 | 「專案尚未綁定 Billing」 | 專案沒計費 | Kevin 到 Console 綁定 |
 | Enable 按鈕找不到 | 已開通 / 頁面結構變動 / slug 錯 | 見 Part B「如果 EULA 頁面結構變動」表 |
 | 「Terms of service not accepted」彈窗 | 條款 checkbox 沒勾到 | 工具會重新勾選再送出（最多 3 次）；持續發生見「Agreements 條款 checkbox」 |

@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,6 +72,16 @@ CLAUDE_MODELS = [
 # Fable 家族即使已開通，Cloud Quotas 也沒有配額值；實測申請 Global QPM 10 仍被拒（granted 0）。
 QUOTA_LOCKED_BASE_MODELS = {
     "anthropic-claude-fable": "Fable 家族不開放提升配額",
+}
+
+# 需要開啟 prompt-response 資料分享（dataSharingEnabledProvider）才能呼叫的 base_model。
+# Advanced AI Safety Addendum 範圍內的模型適用；沒開的 location 呼叫會回 403。
+# Model Garden 開通流程不會自動開，且每個（模型 × location）各自設定。
+DATA_SHARING_BASE_MODELS = {"anthropic-claude-fable"}
+DATA_SHARING_LOCATIONS = {
+    "global": "aiplatform.googleapis.com",
+    "us":     "aiplatform.us.rep.googleapis.com",
+    "eu":     "aiplatform.eu.rep.googleapis.com",
 }
 
 # Routing 策略分類關鍵字（比對 Cloud Quotas metric 名稱前綴）
@@ -473,6 +484,138 @@ def is_model_enabled(project_id: str, slug: str, region: str = "us-east5") -> bo
         return False
     except Exception:
         return False
+
+
+def _publisher_model_config_request(method: str, project_id: str, slug: str, location: str, body: dict | None = None):
+    """呼叫 fetchPublisherModelConfig（GET）或 setPublisherModelConfig（POST），回傳 requests.Response。"""
+    import requests
+    from google.auth import default
+    from google.auth.transport.requests import Request
+
+    creds, _ = default()
+    creds.refresh(Request())
+    host = DATA_SHARING_LOCATIONS[location]
+    verb = "fetchPublisherModelConfig" if method == "GET" else "setPublisherModelConfig"
+    url = (
+        f"https://{host}/v1beta1/projects/{project_id}/locations/{location}"
+        f"/publishers/anthropic/models/{slug}:{verb}"
+    )
+    headers = {
+        "Authorization": f"Bearer {creds.token}",
+        "X-Goog-User-Project": project_id,
+        "Content-Type": "application/json",
+    }
+    return requests.request(method, url, headers=headers, json=body, timeout=30)
+
+
+def get_data_sharing(project_id: str, slug: str, location: str) -> bool | None:
+    """
+    查詢某模型在某 location 是否已開啟資料分享。
+        True  → dataSharingEnabledProvider 為 ANTHROPIC
+        False → 沒有設定（404 PublisherModelConfig not found，或欄位不是 ANTHROPIC）
+        None  → 查詢失敗（權限 / 網路），狀態未知
+    """
+    try:
+        r = _publisher_model_config_request("GET", project_id, slug, location)
+    except Exception:
+        return None
+    if r.status_code == 404:
+        return False
+    if r.status_code != 200:
+        return None
+    return str(r.json().get("dataSharingEnabledProvider", "")).upper() == "ANTHROPIC"
+
+
+def set_data_sharing(project_id: str, slug: str, location: str) -> tuple[bool, str]:
+    """開啟某模型在某 location 的資料分享，並輪詢 fetch 直到確認生效（最多約 30 秒）。"""
+    try:
+        r = _publisher_model_config_request(
+            "POST", project_id, slug, location,
+            body={"publisherModelConfig": {"dataSharingEnabledProvider": "anthropic"}},
+        )
+    except Exception as e:
+        return False, f"請求失敗：{str(e)[:60]}"
+    if r.status_code != 200:
+        try:
+            msg = r.json().get("error", {}).get("message", r.text)
+        except Exception:
+            msg = r.text
+        return False, f"HTTP {r.status_code}：{msg[:60]}"
+
+    for _ in range(10):
+        if get_data_sharing(project_id, slug, location):
+            return True, "已開啟"
+        time.sleep(3)
+    return False, "已送出但尚未確認生效，稍後用 data-sharing 子指令再查"
+
+
+def ensure_data_sharing(
+    pairs: list[tuple[str, tuple]],
+    *,
+    yes: bool = False,
+    fix: bool = True,
+) -> list[OpResult]:
+    """
+    對 (project_id, model) 組合檢查並（視 fix）開啟 global / us / eu 的資料分享。
+    只處理 DATA_SHARING_BASE_MODELS 內、且已開通 EULA 的模型；開啟前列出計畫並確認。
+    """
+    pairs = [(pid, m) for pid, m in pairs if m[1] in DATA_SHARING_BASE_MODELS]
+    if not pairs:
+        return []
+
+    console.print("\n[bold]檢查資料分享（dataSharingEnabledProvider）狀態...[/]")
+    results: list[OpResult] = []
+    missing: list[tuple[str, tuple, str]] = []
+
+    for pid, m in pairs:
+        display_name, _bm, slug = m
+        if not is_model_enabled(pid, slug):
+            results.append(OpResult(pid, f"{display_name} 資料分享", "SKIP", "模型未開通，略過"))
+            continue
+        cells = []
+        for loc in DATA_SHARING_LOCATIONS:
+            state = get_data_sharing(pid, slug, loc)
+            if state is True:
+                cells.append(f"{loc} ✅")
+            elif state is False:
+                cells.append(f"{loc} ❌")
+                missing.append((pid, m, loc))
+            else:
+                cells.append(f"{loc} ⚠")
+                results.append(OpResult(pid, f"{display_name} 資料分享 {loc}", "FAIL", "查詢失敗（權限不足？）"))
+        console.print(f"  [cyan]{pid}[/] {display_name}：{'  '.join(cells)}")
+
+    if not missing:
+        if not results:
+            console.print("[green]✓ 所有已開通的組合都已開啟資料分享。[/]")
+        return results
+
+    if not fix:
+        for pid, m, loc in missing:
+            results.append(OpResult(pid, f"{m[0]} 資料分享 {loc}", "SKIP", "未開啟（加 --fix 開啟）"))
+        return results
+
+    console.print(f"\n[bold]即將開啟以下 {len(missing)} 個資料分享設定：[/]")
+    for pid, m, loc in missing:
+        console.print(f"  • [cyan]{pid}[/] {m[0]} @ {loc}")
+    console.print(
+        "[yellow]開啟後，該專案此模型在該 location 的 prompt 與回應會即時分享給 Anthropic"
+        "（Advanced AI Safety Addendum / Anthropic 條款 Section F 的要求）；沒開的 location 呼叫會回 403。[/]"
+    )
+    if not yes:
+        if not inquirer.confirm(message="確認開啟？", default=True).execute():
+            console.print("[dim]已取消資料分享設定。[/]")
+            for pid, m, loc in missing:
+                results.append(OpResult(pid, f"{m[0]} 資料分享 {loc}", "SKIP", "使用者取消"))
+            return results
+
+    for pid, m, loc in missing:
+        ok, note = set_data_sharing(pid, m[2], loc)
+        mark = "[green]✓[/]" if ok else "[red]✗[/]"
+        console.print(f"  {mark} {pid} {m[0]} @ {loc}：{note}")
+        results.append(OpResult(pid, f"{m[0]} 資料分享 {loc}", "DONE" if ok else "FAIL", note))
+
+    return results
 
 
 def print_batch_summary(results: list[OpResult], title: str, write_failed_file: bool = True):
@@ -2003,10 +2146,12 @@ def run_batch_enable(
       2. 組出實際需要跑 EULA 的計畫 (plan)，已開通的直接記 SKIP
       3. 顯示計畫、請使用者確認
       4. 呼叫 run_enable_session 用單一 browser context 跑完整個 plan
+      5. 需要資料分享的模型（Fable）補開 global / us / eu 的 dataSharingEnabledProvider
     回傳所有 (project, model) 的 OpResult。
     """
     results: list[OpResult] = []
     plan: list[tuple[str, list[tuple]]] = []
+    ready_pids: list[str] = []   # 通過 Billing / API 預檢的專案
 
     console.print()
     for pid in project_ids:
@@ -2033,6 +2178,8 @@ def run_batch_enable(
                 results.append(OpResult(pid, m[0], "FAIL", f"啟用 API 失敗: {str(e)[:60]}"))
             continue
 
+        ready_pids.append(pid)
+
         # 檢查哪些 model 已開通
         to_enable: list[tuple] = []
         for m in models:
@@ -2046,9 +2193,12 @@ def run_batch_enable(
         if to_enable:
             plan.append((pid, to_enable))
 
+    sharing_pairs = [(pid, m) for pid in ready_pids for m in models]
+
     # 全部已開通
     if not plan:
         console.print("\n[green bold]✅ 所有 (專案 × 模型) 組合均已開通，無需執行瀏覽器流程。[/]")
+        results.extend(ensure_data_sharing(sharing_pairs, yes=yes))
         return results
 
     # 顯示計畫
@@ -2073,6 +2223,7 @@ def run_batch_enable(
     # 實際執行瀏覽器流程
     session_results = run_enable_session(plan, config)
     results.extend(session_results)
+    results.extend(ensure_data_sharing(sharing_pairs, yes=yes))
 
     return results
 
@@ -2420,6 +2571,46 @@ def cmd_list_models(args):
     console.print(table)
 
 
+def cmd_data_sharing(args):
+    """查詢（加 --fix 則開啟）Fable 等模型在 global / us / eu 的資料分享設定。
+
+    用法：
+      python main.py data-sharing --project X
+      python main.py data-sharing --projects p1,p2 --models claude-fable-5 --fix
+    """
+    check_gcloud_auth()
+    project_ids = parse_projects_input(
+        getattr(args, "project", None),
+        getattr(args, "projects", None),
+        getattr(args, "projects_file", None),
+    )
+
+    if args.models:
+        models = []
+        for slug in [s.strip() for s in args.models.split(",") if s.strip()]:
+            m = _find_model_by_slug(slug)
+            if m is None:
+                console.print(f"[red]✗ 找不到模型 slug '{slug}'[/]")
+                console.print(f"  可用：{_available_slugs()}")
+                sys.exit(1)
+            if m[1] not in DATA_SHARING_BASE_MODELS:
+                console.print(f"[yellow]⊘ {m[0]} 不需要資料分享，略過[/]")
+                continue
+            models.append(m)
+    else:
+        models = [m for m in CLAUDE_MODELS if m[1] in DATA_SHARING_BASE_MODELS]
+
+    if not models:
+        console.print("[yellow]沒有需要檢查資料分享的模型。[/]")
+        return
+
+    results = ensure_data_sharing(
+        [(pid, m) for pid in project_ids for m in models],
+        yes=args.yes, fix=args.fix,
+    )
+    print_batch_summary(results, title="資料分享結果")
+
+
 def _add_projects_args(p: argparse.ArgumentParser, required: bool):
     """共用：--project / --projects / --projects-file 三選一參數組。"""
     group = p.add_argument_group("目標專案（三選一）")
@@ -2464,6 +2655,16 @@ def parse_args() -> argparse.Namespace:
     p_list = sub.add_parser("list-models", help="列出支援的模型；加 --project 可檢查開通狀態 matrix")
     _add_projects_args(p_list, required=False)
 
+    # data-sharing
+    p_share = sub.add_parser(
+        "data-sharing",
+        help="查詢 / 開啟 Fable 等模型在 global、us、eu 的資料分享（沒開的 location 呼叫會 403）",
+    )
+    _add_projects_args(p_share, required=True)
+    p_share.add_argument("--models", help="模型 URL slug，逗號分隔（預設：所有需要資料分享的模型）")
+    p_share.add_argument("--fix", action="store_true", help="開啟尚未開啟的 location（預設只查詢）")
+    p_share.add_argument("-y", "--yes", action="store_true", help="跳過確認提示")
+
     return parser.parse_args()
 
 
@@ -2499,6 +2700,7 @@ def interactive_menu():
             choices=[
                 {"name": "🚀 環境開通（啟用 API + EULA 自動填表）", "value": "enable"},
                 {"name": "📊 配額管理（查詢與提升配額）",            "value": "quota"},
+                {"name": "🔗 Fable 資料分享（查詢與開啟）",          "value": "data_sharing"},
                 {"name": "🗑️  清除瀏覽器登入狀態",                   "value": "clear_state"},
                 {"name": "❌ 離開",                                  "value": "exit"},
             ],
@@ -2536,6 +2738,16 @@ def interactive_menu():
         elif action == "quota":
             quota_flow(projects)
 
+        elif action == "data_sharing":
+            selected_pids = select_projects_multi(projects)
+            if selected_pids:
+                sharing_models = [m for m in CLAUDE_MODELS if m[1] in DATA_SHARING_BASE_MODELS]
+                results = ensure_data_sharing(
+                    [(pid, m) for pid in selected_pids for m in sharing_models],
+                    yes=False, fix=True,
+                )
+                print_batch_summary(results, title="資料分享結果")
+
         elif action == "clear_state":
             if BROWSER_STATE_FILE.exists():
                 BROWSER_STATE_FILE.unlink()
@@ -2559,6 +2771,8 @@ def main():
         cmd_quota(args)
     elif args.command == "list-models":
         cmd_list_models(args)
+    elif args.command == "data-sharing":
+        cmd_data_sharing(args)
     else:
         interactive_menu()
 
