@@ -301,7 +301,7 @@ Tuple 三元素，**順序不可顛倒**：
 
 **影響**：多個模型可以指向同一個 base_model；`run_batch_quota` 會自動顯示「此配額為家族共用池，同時適用於…」提示，避免 Kevin 誤以為只改到單一版本。
 
-**⚠ Fable 家族不開放提升配額**：已開通的專案上，`anthropic-claude-fable` 的配額也全部沒有數值；實測申請 Global QPM 10 仍被拒（granted 0）。程式用 `QUOTA_LOCKED_BASE_MODELS` 標記，`run_batch_quota` 直接回 SKIP、互動選單不讓選。Kevin 要求提 Fable 配額時，直接說明不開放，不要送申請。新增的 base_model 若也確認不開放，加進這個 dict。
+**⚠ Fable 家族不開放提升配額**：已開通的專案上，`anthropic-claude-fable` 的配額也全部沒有數值；實測申請 Global QPM 10 仍被拒（granted 0），另一個客戶專案的 Global QPM 同樣是 0。官方文件列的預設值（Fable 5 global 2,000 QPM）與實際不符，以實測為準。程式用 `QUOTA_LOCKED_BASE_MODELS` 標記，`run_batch_quota` 直接回 SKIP、互動選單不讓選。Kevin 要求提 Fable 配額時，直接說明不開放，不要送申請。新增的 base_model 若也確認不開放，加進這個 dict。
 
 ### 新增模型完整步驟
 
