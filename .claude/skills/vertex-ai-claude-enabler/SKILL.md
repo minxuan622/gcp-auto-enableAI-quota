@@ -398,7 +398,7 @@ aiplatform.googleapis.com/online_prediction_input_tokens_per_minute_per_base_mod
 症狀：點「Enable」後被導到 `/marketplace/product/google/aiplatform.googleapis.com`（Agent Platform API 產品頁），逾時失敗。這不是 onboarding 或權限問題，是點錯了元素：
 
 真正根因（兩者疊加）：
-1. **Console 介面語言**：Kevin 帳號是繁中，真正的按鈕文字是 **「啟用」**，不是英文 "Enable"。
+1. **Console 介面語言**：Console 會依帳號語言在地化，沒強制英文時（例如帳號設成繁中）按鈕文字是 **「啟用」**，不是英文 "Enable"。本工具一律以英文介面操作。
 2. **`:has-text("Enable")` 是子字串比對**：撲空「啟用」後，反而誤中頁面上的英文狀態連結 **「Vertex AI API enabl*ed*」**（一個 `<a>`，點了會導到 marketplace 產品頁）。
 
 修法：
